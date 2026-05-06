@@ -234,7 +234,7 @@ export default function App() {
       {flash && <Toast msg={flash} />}
 
       {/* ── HEADER ─────────────────────────────────────────────────── */}
-      <header style={{ height: 80, padding: "0 16px", display: "flex", alignItems: "center", justifyContent: "space-between", borderBottom: `1.5px solid ${K0}`, position: "relative" }}>
+      <header style={{ height: 84, padding: "0 16px", display: "flex", alignItems: "center", justifyContent: "space-between", borderBottom: `1.5px solid ${K0}`, position: "relative" }}>
         {/* Left: stacked label */}
         <div style={{ display: "flex", flexDirection: "column", gap: 1, width: 72 }}>
           <span style={{ fontSize: 9, letterSpacing: "0.25em", textTransform: "uppercase", lineHeight: 1.3 }}>Ping Pong</span>
@@ -242,7 +242,7 @@ export default function App() {
           <span style={{ fontSize: 9, letterSpacing: "0.25em", textTransform: "uppercase", lineHeight: 1.3, color: GR }}>K=24</span>
         </div>
         {/* Center: logo */}
-        <img src="/lettera7-01.png" alt="Lettera7" style={{ position: "absolute", left: "50%", transform: "translateX(-50%)", height: 32, width: "auto" }} />
+        <img src="/lettera7-01.png" alt="Lettera7" style={{ position: "absolute", left: "50%", transform: "translateX(-50%)", width: 94, height: 70, objectFit: "contain" }} />
         {/* Right: yellow UPDATE button */}
         <button onClick={loadData} style={{ background: Y, border: "none", width: 72, height: 48, fontFamily: "inherit", fontSize: 9, letterSpacing: "0.2em", textTransform: "uppercase", cursor: "pointer", color: K0, display: "flex", alignItems: "center", justifyContent: "center" }}>
           Update
