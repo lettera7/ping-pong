@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html lang="it">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Ping Pong — Lettera7</title>
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🏓</text></svg>" />
+    <style>* { box-sizing: border-box; margin: 0; padding: 0; }</style>
+    <script type="module" crossorigin src="/assets/index-CAh-wDLY.js"></script>
+  </head>
+  <body>
+    <div id="root">
+      <div id="debug-fallback" style="font-family:monospace;padding:20px;background:#fff;color:#333">
+        <p>⏳ Caricamento React...</p>
+        <p id="debug-msg" style="color:red;margin-top:8px"></p>
+      </div>
+    </div>
+    <script>
+      window.onerror = function(msg, src, line, col, err) {
+        document.getElementById('debug-msg').textContent = '❌ Errore JS: ' + msg + ' (' + src + ':' + line + ')';
+      };
+    </script>
+  </body>
+</html>

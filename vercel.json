@@ -1,5 +1,5 @@
 {
-  "buildCommand": "npm run build",
+  "buildCommand": "echo skip",
   "outputDirectory": "dist",
-  "framework": "vite"
+  "framework": null
 }
