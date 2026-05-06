@@ -128,16 +128,15 @@ export default function App() {
 
   const loadData = useCallback(async () => {
     try {
-      const res = await fetch(SHEET_CSV_URL);
-      if (!res.ok) throw new Error("sheet fetch failed");
-      const csv = await res.text();
-      const matches = parseCSV(csv);
-      if (matches.length > 0) {
-        saveToStorage(matches); // aggiorna cache locale
+      const res = await fetch(SCRIPT_URL);
+      if (!res.ok) throw new Error("script fetch failed");
+      const matches: RawMatch[] = await res.json();
+      if (Array.isArray(matches) && matches.length > 0) {
+        saveToStorage(matches);
         setState(replayMatches(matches));
         return;
       }
-    } catch { /* foglio non raggiungibile, usa cache locale */ }
+    } catch { /* script non raggiungibile, usa cache locale */ }
     setState(replayMatches(loadFromStorage()));
   }, []);
 
