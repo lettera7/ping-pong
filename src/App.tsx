@@ -2,6 +2,8 @@ import { useState, useEffect, useCallback } from "react";
 
 const K = 24;
 const SCRIPT_URL = "https://script.google.com/macros/s/AKfycbxCMuzQk90P0D9vwBpZUTD-ifLAc8MokociQdNgy8Nd4xB1Duboj7CUT6syA98P-ISM/exec";
+const SHEET_ID = "1V4OPHS3g55m5WxOBmPKLkBPvRtCB5jSHJ-c0FvXlN8c";
+const SHEET_CSV_URL = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/export?format=csv&gid=0`;
 const YELLOW = "#F5E642";
 const BLACK = "#0D0D0D";
 const GRAY = "#888";
@@ -67,6 +69,35 @@ function replayMatches(rawMatches: RawMatch[]): GameState {
   return { players, matches };
 }
 
+function parseCSV(csv: string): RawMatch[] {
+  const lines = csv.trim().split("\n").filter(l => l.trim());
+  if (lines.length < 2) return [];
+  const headers = lines[0].split(",").map(h => h.trim().replace(/"/g, "").toLowerCase());
+  const idx = {
+    date:    headers.findIndex(h => h.includes("date") || h.includes("data")),
+    playerA: headers.findIndex(h => h.includes("playera") || h.includes("player_a") || h.includes("giocatore a") || h === "a"),
+    playerB: headers.findIndex(h => h.includes("playerb") || h.includes("player_b") || h.includes("giocatore b") || h === "b"),
+    scoreA:  headers.findIndex(h => h.includes("scorea") || h.includes("score_a") || h.includes("punteggio a") || h === "scorea"),
+    scoreB:  headers.findIndex(h => h.includes("scoreb") || h.includes("score_b") || h.includes("punteggio b") || h === "scoreb"),
+  };
+  // fallback: assume order date, playerA, playerB, scoreA, scoreB
+  if (idx.date    < 0) idx.date    = 0;
+  if (idx.playerA < 0) idx.playerA = 1;
+  if (idx.playerB < 0) idx.playerB = 2;
+  if (idx.scoreA  < 0) idx.scoreA  = 3;
+  if (idx.scoreB  < 0) idx.scoreB  = 4;
+  return lines.slice(1).map(line => {
+    const cols = line.split(",").map(c => c.trim().replace(/"/g, ""));
+    return {
+      date: cols[idx.date] ?? "",
+      playerA: cols[idx.playerA] ?? "",
+      playerB: cols[idx.playerB] ?? "",
+      scoreA: parseInt(cols[idx.scoreA]),
+      scoreB: parseInt(cols[idx.scoreB]),
+    };
+  }).filter(m => m.playerA && m.playerB && !isNaN(m.scoreA) && !isNaN(m.scoreB));
+}
+
 function loadFromStorage(): RawMatch[] {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
@@ -95,7 +126,18 @@ export default function App() {
 
   function showFlash(msg: string) { setFlash(msg); setTimeout(() => setFlash(null), 2500); }
 
-  const loadData = useCallback(() => {
+  const loadData = useCallback(async () => {
+    try {
+      const res = await fetch(SHEET_CSV_URL);
+      if (!res.ok) throw new Error("sheet fetch failed");
+      const csv = await res.text();
+      const matches = parseCSV(csv);
+      if (matches.length > 0) {
+        saveToStorage(matches); // aggiorna cache locale
+        setState(replayMatches(matches));
+        return;
+      }
+    } catch { /* foglio non raggiungibile, usa cache locale */ }
     setState(replayMatches(loadFromStorage()));
   }, []);
 
@@ -103,11 +145,11 @@ export default function App() {
 
   async function saveMatch(match: Match) {
     setSaving(true);
+    // aggiorna cache locale
     const existing = loadFromStorage();
-    const updated: RawMatch[] = [...existing, { date: match.date, playerA: match.playerA, playerB: match.playerB, scoreA: match.scoreA, scoreB: match.scoreB }];
-    saveToStorage(updated);
+    saveToStorage([...existing, { date: match.date, playerA: match.playerA, playerB: match.playerB, scoreA: match.scoreA, scoreB: match.scoreB }]);
 
-    // Mirror to Google Sheet via img (fire-and-forget, no CORS issue)
+    // scrivi su Google Sheet via Apps Script (fire-and-forget, bypass CORS)
     try {
       const params = new URLSearchParams({
         action: "addMatch",
@@ -118,9 +160,10 @@ export default function App() {
         scoreB: String(match.scoreB),
       });
       new Image().src = SCRIPT_URL + "?" + params.toString();
-    } catch { /* best-effort */ }
-
-    showFlash("Partita salvata!");
+      showFlash("Partita salvata! 🏓");
+    } catch {
+      showFlash("Salvato in locale (foglio non raggiungibile)");
+    }
     setSaving(false);
   }
 
