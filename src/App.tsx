@@ -3,7 +3,7 @@ import { useState, useEffect, useCallback } from "react";
 const K = 24;
 const SCRIPT_URL = "https://script.google.com/macros/s/AKfycbxCMuzQk90P0D9vwBpZUTD-ifLAc8MokociQdNgy8Nd4xB1Duboj7CUT6syA98P-ISM/exec";
 const SHEET_ID = "1V4OPHS3g55m5WxOBmPKLkBPvRtCB5jSHJ-c0FvXlN8c";
-const SHEET_CSV_URL = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/export?format=csv&gid=0`;
+const SHEET_CSV_URL = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/export?format=csv&sheet=Matches`;
 const YELLOW = "#F5E642";
 const BLACK = "#0D0D0D";
 const GRAY = "#888";
@@ -74,11 +74,11 @@ function parseCSV(csv: string): RawMatch[] {
   if (lines.length < 2) return [];
   const headers = lines[0].split(",").map(h => h.trim().replace(/"/g, "").toLowerCase());
   const idx = {
-    date:    headers.findIndex(h => h.includes("date") || h.includes("data")),
-    playerA: headers.findIndex(h => h.includes("playera") || h.includes("player_a") || h.includes("giocatore a") || h === "a"),
-    playerB: headers.findIndex(h => h.includes("playerb") || h.includes("player_b") || h.includes("giocatore b") || h === "b"),
-    scoreA:  headers.findIndex(h => h.includes("scorea") || h.includes("score_a") || h.includes("punteggio a") || h === "scorea"),
-    scoreB:  headers.findIndex(h => h.includes("scoreb") || h.includes("score_b") || h.includes("punteggio b") || h === "scoreb"),
+    date:    headers.findIndex(h => h === "date" || h === "data"),
+    playerA: headers.findIndex(h => h === "player_a" || h === "playera"),
+    playerB: headers.findIndex(h => h === "player_b" || h === "playerb"),
+    scoreA:  headers.findIndex(h => h === "score_a" || h === "scorea"),
+    scoreB:  headers.findIndex(h => h === "score_b" || h === "scoreb"),
   };
   // fallback: assume order date, playerA, playerB, scoreA, scoreB
   if (idx.date    < 0) idx.date    = 0;
