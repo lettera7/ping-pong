@@ -92,6 +92,16 @@ function parseCSV(csv: string): RawMatch[] {
   }).filter(m => m.playerA && m.playerB && !isNaN(m.scoreA) && !isNaN(m.scoreB));
 }
 
+function formatDate(raw: string): string {
+  if (!raw) return "";
+  const MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+  const ddmm = raw.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (ddmm) return `${ddmm[1].padStart(2,"0")} ${MONTHS[parseInt(ddmm[2])-1]} ${ddmm[3]}`;
+  const d = new Date(raw);
+  if (!isNaN(d.getTime())) return `${String(d.getDate()).padStart(2,"0")} ${MONTHS[d.getMonth()]} ${d.getFullYear()}`;
+  return raw;
+}
+
 function loadFromStorage(): RawMatch[] {
   try { const r = localStorage.getItem(STORAGE_KEY); return r ? JSON.parse(r) : SEED_MATCHES; } catch { return SEED_MATCHES; }
 }
@@ -224,14 +234,18 @@ export default function App() {
       {flash && <Toast msg={flash} />}
 
       {/* ── HEADER ─────────────────────────────────────────────────── */}
-      <header style={{ padding: "20px 20px 0", display: "flex", alignItems: "center", justifyContent: "space-between", borderBottom: `1.5px solid ${K0}` }}>
-        <img src="/lettera7-01.png" alt="Lettera7" style={{ height: 28, width: "auto" }} />
-        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-          <span style={{ fontSize: 13, letterSpacing: "0.15em", textTransform: "uppercase" }}>Ping Pong</span>
-          <span style={{ background: Y, fontSize: 8, letterSpacing: "0.25em", textTransform: "uppercase", padding: "3px 8px", fontWeight: 500 }}>ELO K=24</span>
+      <header style={{ height: 80, padding: "0 16px", display: "flex", alignItems: "center", justifyContent: "space-between", borderBottom: `1.5px solid ${K0}`, position: "relative" }}>
+        {/* Left: stacked label */}
+        <div style={{ display: "flex", flexDirection: "column", gap: 1, width: 72 }}>
+          <span style={{ fontSize: 9, letterSpacing: "0.25em", textTransform: "uppercase", lineHeight: 1.3 }}>Ping Pong</span>
+          <span style={{ fontSize: 9, letterSpacing: "0.25em", textTransform: "uppercase", lineHeight: 1.3, color: GR }}>ELO</span>
+          <span style={{ fontSize: 9, letterSpacing: "0.25em", textTransform: "uppercase", lineHeight: 1.3, color: GR }}>K=24</span>
         </div>
-        <button onClick={loadData} style={{ background: "none", border: "none", fontSize: 9, letterSpacing: "0.2em", color: GR, cursor: "pointer", fontFamily: "inherit", textTransform: "uppercase", padding: "4px 0" }}>
-          Aggiorna
+        {/* Center: logo */}
+        <img src="/lettera7-01.png" alt="Lettera7" style={{ position: "absolute", left: "50%", transform: "translateX(-50%)", height: 32, width: "auto" }} />
+        {/* Right: yellow UPDATE button */}
+        <button onClick={loadData} style={{ background: Y, border: "none", width: 72, height: 48, fontFamily: "inherit", fontSize: 9, letterSpacing: "0.2em", textTransform: "uppercase", cursor: "pointer", color: K0, display: "flex", alignItems: "center", justifyContent: "center" }}>
+          Update
         </button>
       </header>
 
@@ -291,7 +305,7 @@ export default function App() {
               <div>
                 {rest.map(([name, p], i) => (
                   <div key={name} style={{ display: "flex", alignItems: "center", padding: "16px 20px", borderBottom: `1px solid #e8e8e8`, gap: 16 }}>
-                    <span style={{ fontSize: 11, color: GR, width: 20, flexShrink: 0, letterSpacing: "0.05em" }}>{i + 2}</span>
+                    <span style={{ fontSize: 11, color: GR, width: 24, flexShrink: 0, letterSpacing: "0.05em" }}>{i + 2}°</span>
                     <div style={{ flex: 1 }}>
                       <div style={{ fontSize: 17, letterSpacing: "-0.01em" }}>{name}</div>
                       <div style={{ fontSize: 9, color: GR, marginTop: 3, letterSpacing: "0.1em" }}>{p.matches}P · {p.wins}V · {p.losses}S · {p.matches ? Math.round(p.wins / p.matches * 100) : 0}%</div>
@@ -338,7 +352,7 @@ export default function App() {
                     </div>
                     {month.standings.map(([name, rating], i) => (
                       <div key={name as string} style={{ display: "flex", alignItems: "center", padding: "12px 20px", borderTop: "1px solid #efefef", gap: 14 }}>
-                        <span style={{ fontSize: 10, color: i === 0 ? K0 : GR, width: 18, flexShrink: 0 }}>{i + 1}</span>
+                        <span style={{ fontSize: 10, color: i === 0 ? K0 : GR, width: 22, flexShrink: 0 }}>{i + 1}°</span>
                         <span style={{ flex: 1, fontSize: 15, fontWeight: i === 0 ? 500 : 300 }}>{name as string}</span>
                         <span style={{ fontSize: 16 }}>{rating ?? "–"}</span>
                       </div>
@@ -425,7 +439,7 @@ export default function App() {
                     <span style={{ fontWeight: m.winner === m.playerB ? 500 : 300, color: m.winner === m.playerB ? K0 : GR }}>{m.playerB}</span>
                   </div>
                   <div style={{ fontSize: 9, color: GR, marginTop: 4, letterSpacing: "0.1em", display: "flex", gap: 10 }}>
-                    <span>{m.date}</span>
+                    <span>{formatDate(m.date)}</span>
                     <span style={{ color: m.dA >= 0 ? "#1a7a1a" : "#c0392b" }}>{m.playerA} {m.dA >= 0 ? "+" : ""}{m.dA}</span>
                   </div>
                 </div>
