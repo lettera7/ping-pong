@@ -31,10 +31,35 @@
         -webkit-font-smoothing: antialiased;
         -moz-osx-font-smoothing: grayscale;
       }
-      * { -webkit-tap-highlight-color: transparent; }
       input[type=number] { -moz-appearance: textfield; }
       input[type=number]::-webkit-outer-spin-button,
       input[type=number]::-webkit-inner-spin-button { -webkit-appearance: none; }
+
+      /* WCAG 2.4.7 — focus visibile per navigazione tastiera */
+      :focus { outline: none; }
+      button:focus-visible, a:focus-visible, [role="button"]:focus-visible {
+        outline: 3px solid #0D0D0D;
+        outline-offset: 2px;
+      }
+      input:focus-visible, select:focus-visible {
+        outline: 3px solid #0D0D0D;
+        outline-offset: -3px;
+      }
+
+      /* WCAG 2.3.3 — rispetta prefers-reduced-motion */
+      @media (prefers-reduced-motion: reduce) {
+        *, *::before, *::after {
+          animation-duration: 0.01ms !important;
+          transition-duration: 0.01ms !important;
+        }
+      }
+
+      /* Screen-reader only utility */
+      .sr-only {
+        position: absolute; width: 1px; height: 1px; padding: 0;
+        margin: -1px; overflow: hidden; clip: rect(0,0,0,0);
+        white-space: nowrap; border: 0;
+      }
     </style>
   </head>
   <body>
