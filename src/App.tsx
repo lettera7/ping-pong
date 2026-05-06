@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 
 const K = 24;
-const SCRIPT_URL = "https://script.google.com/macros/s/AKfycbxCMuzQk90P0D9vwBpZUTD-ifLAc8MokociQdNgy8Nd4xB1Duboj7CUT6syA98P-ISM/exec";
+const SCRIPT_URL = "https://script.google.com/macros/s/AKfycbyqms0XJa93Q48ruSOnYgfm4hi4HJ3B5jLXoZkk2GFIeDFO1eE23glP1RNkZ044vPAj/exec";
 const SHEET_ID = "1V4OPHS3g55m5WxOBmPKLkBPvRtCB5jSHJ-c0FvXlN8c";
 const SHEET_CSV_URL = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/export?format=csv&sheet=Matches`;
 const YELLOW = "#F5E642";
