@@ -2,23 +2,43 @@
 <html lang="it">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <title>Ping Pong — Lettera7</title>
-    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🏓</text></svg>" />
-    <style>* { box-sizing: border-box; margin: 0; padding: 0; }</style>
-    <script type="module" crossorigin src="/assets/index-pLEXvb98.js"></script>
+    <link rel="icon" type="image/png" href="/lettera7-01.png" />
+    <style>
+      @font-face {
+        font-family: 'Lettera7Diatype';
+        src: url('/fonts/Lettera7Diatype-Medium.woff2') format('woff2'),
+             url('/fonts/Lettera7Diatype-Medium.woff') format('woff');
+        font-weight: 500;
+        font-style: normal;
+        font-display: swap;
+      }
+      @font-face {
+        font-family: 'Lettera7Diatype';
+        src: url('/fonts/Lettera7Diatype-Light.woff2') format('woff2');
+        font-weight: 300;
+        font-style: normal;
+        font-display: swap;
+      }
+      *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+      html, body { height: 100%; }
+      body {
+        font-family: 'Lettera7Diatype', 'Helvetica Neue', Helvetica, Arial, sans-serif;
+        font-weight: 500;
+        background: #fff;
+        color: #0D0D0D;
+        -webkit-font-smoothing: antialiased;
+        -moz-osx-font-smoothing: grayscale;
+      }
+      * { -webkit-tap-highlight-color: transparent; }
+      input[type=number] { -moz-appearance: textfield; }
+      input[type=number]::-webkit-outer-spin-button,
+      input[type=number]::-webkit-inner-spin-button { -webkit-appearance: none; }
+    </style>
+    <script type="module" crossorigin src="/assets/index-DFepn5u6.js"></script>
   </head>
   <body>
-    <div id="root">
-      <div id="debug-fallback" style="font-family:monospace;padding:20px;background:#fff;color:#333">
-        <p>⏳ Caricamento React...</p>
-        <p id="debug-msg" style="color:red;margin-top:8px"></p>
-      </div>
-    </div>
-    <script>
-      window.onerror = function(msg, src, line, col, err) {
-        document.getElementById('debug-msg').textContent = '❌ Errore JS: ' + msg + ' (' + src + ':' + line + ')';
-      };
-    </script>
+    <div id="root"></div>
   </body>
 </html>
