@@ -290,13 +290,15 @@ export default function App() {
               {/* #1 hero card – yellow full bleed */}
               {first && (
                 <div style={{ background: Y, padding: "28px 20px 24px", borderBottom: `1.5px solid ${K0}` }}>
-                  <div style={{ fontSize: 9, letterSpacing: "0.3em", textTransform: "uppercase", color: K0, opacity: 0.6, marginBottom: 6 }}>Classifica · 1°</div>
-                  <div style={{ fontSize: 44, letterSpacing: "-0.03em", lineHeight: 1, marginBottom: 12 }}>{first[0]}</div>
-                  <div style={{ display: "flex", alignItems: "baseline", gap: 16 }}>
-                    <span style={{ fontSize: 28, letterSpacing: "-0.02em" }}>{first[1].rating}</span>
-                    <span style={{ fontSize: 10, color: K0, opacity: 0.6, letterSpacing: "0.1em" }}>
-                      {first[1].matches}P · {first[1].wins}V · {first[1].losses}S · {first[1].matches ? Math.round(first[1].wins / first[1].matches * 100) : 0}%
-                    </span>
+                  <div style={{ fontSize: 9, letterSpacing: "0.3em", color: K0, opacity: 0.6, marginBottom: 6 }}>Classifica · 1°</div>
+                  <div style={{ display: "flex", alignItems: "flex-end", justifyContent: "space-between" }}>
+                    <div style={{ fontSize: 44, letterSpacing: "-0.03em", lineHeight: 1 }}>{first[0]}</div>
+                    <div style={{ textAlign: "right" }}>
+                      <div style={{ fontSize: 28, letterSpacing: "-0.02em", lineHeight: 1 }}>{first[1].rating}</div>
+                      <div style={{ fontSize: 9, color: K0, opacity: 0.6, letterSpacing: "0.1em", marginTop: 4 }}>
+                        {first[1].matches}P · {first[1].wins}V · {first[1].losses}S · {first[1].matches ? Math.round(first[1].wins / first[1].matches * 100) : 0}%
+                      </div>
+                    </div>
                   </div>
                 </div>
               )}
