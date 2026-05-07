@@ -234,18 +234,18 @@ export default function App() {
     <div style={W}>
       {flash && <Toast msg={flash} />}
 
-      {/* ── HEADER ─────────────────────────────────────────────────── */}
-      <header style={{ height: 84, padding: "0 16px", display: "flex", alignItems: "center", justifyContent: "space-between", borderBottom: `1.5px solid ${K0}`, position: "relative" }}>
-        {/* Left: stacked label */}
-        <div style={{ display: "flex", flexDirection: "column", gap: 1, width: 72 }}>
-          <span style={{ fontSize: 10, letterSpacing: "0.2em", textTransform: "uppercase", lineHeight: 1.3 }}>Ping Pong</span>
-          <span style={{ fontSize: 10, letterSpacing: "0.2em", textTransform: "uppercase", lineHeight: 1.3, color: GR }}>ELO</span>
-          <span style={{ fontSize: 10, letterSpacing: "0.2em", textTransform: "uppercase", lineHeight: 1.3, color: GR }}>K=24</span>
+      {/* ── HEADER (Figma: 80px) ───────────────────────────────────── */}
+      <header style={{ height: 80, padding: "0 20px", display: "flex", alignItems: "center", justifyContent: "space-between", borderBottom: `1.5px solid ${K0}`, position: "relative" }}>
+        {/* Left: PING PONG / ELO / K=24 — 12px Medium, line-height 12px */}
+        <div style={{ display: "flex", flexDirection: "column", gap: 0 }}>
+          <span style={{ fontSize: 12, fontWeight: 500, lineHeight: "12px", textTransform: "uppercase", letterSpacing: "0.02em" }}>Ping Pong</span>
+          <span style={{ fontSize: 12, fontWeight: 500, lineHeight: "16px", textTransform: "uppercase", letterSpacing: "0.02em" }}>ELO</span>
+          <span style={{ fontSize: 12, fontWeight: 500, lineHeight: "12px", textTransform: "uppercase", letterSpacing: "0.02em" }}>K=24</span>
         </div>
-        {/* Center: logo */}
-        <img src="/lettera7-01.png" alt="Lettera7" style={{ position: "absolute", left: "50%", transform: "translateX(-50%)", width: 94, height: 70, objectFit: "contain" }} />
-        {/* Right: yellow UPDATE button */}
-        <button type="button" onClick={loadData} aria-label="Aggiorna dati" style={{ background: Y, border: `1.5px solid ${K0}`, width: 72, height: 48, fontFamily: "inherit", fontSize: 9, letterSpacing: "0.2em", textTransform: "uppercase", cursor: "pointer", color: K0, display: "flex", alignItems: "center", justifyContent: "center" }}>
+        {/* Center: logo 94×70, top:5 */}
+        <img src="/lettera7-01.png" alt="Lettera7" style={{ position: "absolute", left: "50%", top: 5, transform: "translateX(-50%)", width: 94, height: 70, objectFit: "contain" }} />
+        {/* Right: yellow UPDATE button 71×48 */}
+        <button type="button" onClick={loadData} aria-label="Aggiorna dati" style={{ background: Y, border: "none", width: 71, height: 48, fontFamily: "inherit", fontSize: 12, fontWeight: 500, letterSpacing: "0.02em", textTransform: "uppercase", cursor: "pointer", color: K0, display: "flex", alignItems: "center", justifyContent: "center" }}>
           Update
         </button>
       </header>
@@ -279,53 +279,61 @@ export default function App() {
       {/* ── STANDINGS ──────────────────────────────────────────────── */}
       {view === "standings" && (
         <div>
-          {/* Tab row */}
-          <div role="tablist" aria-label="Tipologia classifica" style={{ display: "flex", borderBottom: `1.5px solid ${K0}` }}>
-            {(["current", "history"] as const).map(t => (
-              <button key={t} type="button" role="tab" aria-selected={standingsTab === t} onClick={() => setStandingsTab(t)} style={{ flex: 1, padding: "14px 0", minHeight: 44, background: standingsTab === t ? Y : "transparent", border: "none", borderRight: t === "current" ? `1.5px solid ${K0}` : "none", fontFamily: "inherit", fontSize: 11, letterSpacing: "0.2em", textTransform: "uppercase", cursor: "pointer", color: K0, fontWeight: standingsTab === t ? 500 : 300 }}>
-                {t === "current" ? "Maggio 2026" : "Storico mensile"}
-              </button>
-            ))}
+          {/* Tab row — Figma: 48px height, 12px Medium */}
+          <div role="tablist" aria-label="Tipologia classifica" style={{ display: "flex", height: 48, borderBottom: `1.5px solid ${K0}` }}>
+            {(["current", "history"] as const).map(t => {
+              const active = standingsTab === t;
+              return (
+                <button key={t} type="button" role="tab" aria-selected={active} onClick={() => setStandingsTab(t)} style={{ flex: 1, height: 48, background: active ? Y : "#fff", border: "none", borderRight: t === "current" ? `1.5px solid ${K0}` : "none", fontFamily: "inherit", fontSize: 12, fontWeight: 500, letterSpacing: "0.02em", textTransform: "uppercase", cursor: "pointer", color: active ? K0 : GR }}>
+                  {t === "current" ? "Maggio 2026" : "Storico mensile"}
+                </button>
+              );
+            })}
           </div>
 
           {standingsTab === "current" && (
             <>
-              {/* #1 hero card – yellow full bleed */}
+              {/* #1 hero card — Figma: 94px tall, yellow full bleed */}
               {first && (
-                <section aria-label="Primo classificato" style={{ background: Y, padding: "28px 20px 24px", borderBottom: `1.5px solid ${K0}` }}>
-                  <div style={{ fontSize: 10, letterSpacing: "0.3em", color: K0, opacity: 0.75, marginBottom: 6 }}>Classifica · 1°</div>
-                  <div style={{ display: "flex", alignItems: "flex-end", justifyContent: "space-between" }}>
-                    <h1 style={{ fontSize: 44, letterSpacing: "-0.03em", lineHeight: 1, fontWeight: 500, fontFamily: "inherit" }}>{first[0]}</h1>
-                    <div style={{ textAlign: "right" }}>
-                      <div style={{ fontSize: 28, letterSpacing: "-0.02em", lineHeight: 1 }} aria-label={`Punteggio ELO ${first[1].rating}`}>{first[1].rating}</div>
-                      <div style={{ fontSize: 10, color: K0, opacity: 0.75, letterSpacing: "0.1em", marginTop: 4 }} aria-label={`${first[1].matches} partite, ${first[1].wins} vittorie, ${first[1].losses} sconfitte`}>
-                        {first[1].matches}P · {first[1].wins}V · {first[1].losses}S · {first[1].matches ? Math.round(first[1].wins / first[1].matches * 100) : 0}%
-                      </div>
-                    </div>
+                <section aria-label="Primo classificato" style={{ background: Y, height: 94, position: "relative", borderBottom: `1.5px solid ${K0}` }}>
+                  <div style={{ position: "absolute", left: 20, top: 40, fontSize: 16, fontWeight: 500, lineHeight: 1 }}>1°</div>
+                  <h1 style={{ position: "absolute", left: 48, top: 20, fontSize: 36, fontWeight: 500, letterSpacing: "-0.02em", lineHeight: 1, fontFamily: "inherit", margin: 0 }}>{first[0]}</h1>
+                  <div style={{ position: "absolute", right: 20, top: 28, fontSize: 28, fontWeight: 500, letterSpacing: "-0.02em", lineHeight: 1 }} aria-label={`Punteggio ELO ${first[1].rating}`}>{first[1].rating}</div>
+                  <div style={{ position: "absolute", left: 48, top: 62, fontSize: 8, fontWeight: 300, letterSpacing: "0.05em", lineHeight: 1 }} aria-label={`${first[1].matches} partite, ${first[1].wins} vittorie, ${first[1].losses} sconfitte`}>
+                    {first[1].matches}P · {first[1].wins}V · {first[1].losses}S · {first[1].matches ? Math.round(first[1].wins / first[1].matches * 100) : 0}%
                   </div>
                 </section>
               )}
 
-              {/* Remaining players */}
+              {/* Remaining players — Figma: 56px row */}
               <ol style={{ listStyle: "none", padding: 0, margin: 0 }} aria-label="Altri giocatori in classifica">
                 {rest.map(([name, p], i) => (
-                  <li key={name} style={{ display: "flex", alignItems: "center", padding: "16px 20px", borderBottom: `1px solid #e8e8e8`, gap: 16 }}>
-                    <span aria-label={`Posizione ${i + 2}`} style={{ fontSize: 12, color: GR, width: 28, flexShrink: 0, letterSpacing: "0.05em" }}>{i + 2}°</span>
-                    <div style={{ flex: 1 }}>
-                      <div style={{ fontSize: 17, letterSpacing: "-0.01em" }}>{name}</div>
-                      <div aria-label={`${p.matches} partite, ${p.wins} vittorie, ${p.losses} sconfitte`} style={{ fontSize: 10, color: GR, marginTop: 3, letterSpacing: "0.1em" }}>{p.matches}P · {p.wins}V · {p.losses}S · {p.matches ? Math.round(p.wins / p.matches * 100) : 0}%</div>
-                    </div>
-                    <span aria-label={`Punteggio ${p.rating}`} style={{ fontSize: 22, letterSpacing: "-0.02em" }}>{p.rating}</span>
+                  <li key={name} style={{ height: 56, position: "relative", borderBottom: `1.5px solid #e8e8e8` }}>
+                    <span aria-label={`Posizione ${i + 2}`} style={{ position: "absolute", left: 20, top: 19, fontSize: 12, fontWeight: 500, lineHeight: 1 }}>{i + 2}°</span>
+                    <span style={{ position: "absolute", left: 48, top: 14, fontSize: 18, fontWeight: 500, letterSpacing: "-0.01em", lineHeight: 1 }}>{name}</span>
+                    <span aria-label={`${p.matches} partite, ${p.wins} vittorie, ${p.losses} sconfitte`} style={{ position: "absolute", left: 48, top: 36, fontSize: 8, fontWeight: 300, color: GR, letterSpacing: "0.05em", lineHeight: 1 }}>{p.matches}P · {p.wins}V · {p.losses}S · {p.matches ? Math.round(p.wins / p.matches * 100) : 0}%</span>
+                    <span aria-label={`Punteggio ${p.rating}`} style={{ position: "absolute", right: 20, top: 18, fontSize: 22, fontWeight: 500, letterSpacing: "-0.02em", lineHeight: 1 }}>{p.rating}</span>
                   </li>
                 ))}
               </ol>
 
-              {/* Add player */}
-              <form onSubmit={(e) => { e.preventDefault(); addPlayer(); }} style={{ margin: "0 20px", padding: "20px 0", borderTop: `1.5px solid ${K0}` }}>
-                <label htmlFor="new-player" style={{ display: "block", fontSize: 9, letterSpacing: "0.25em", color: GR, textTransform: "uppercase", marginBottom: 10 }}>Aggiungi giocatore</label>
-                <div style={{ display: "flex", gap: 8 }}>
-                  <input id="new-player" name="newPlayer" type="text" value={newPlayer} onChange={e => setNewPlayer(e.target.value)} placeholder="Nome" style={inputStyle} autoComplete="off" />
-                  <button type="submit" aria-label="Aggiungi giocatore" style={{ ...solidBtn(K0, "#fff"), width: 48, padding: 0, flexShrink: 0, fontSize: 20 }}>+</button>
+              {/* Add player — Figma exact */}
+              <form onSubmit={(e) => { e.preventDefault(); addPlayer(); }} style={{ borderTop: `1.5px solid ${K0}`, padding: "0 20px" }}>
+                <label htmlFor="new-player" style={{ display: "block", fontSize: 8, fontWeight: 300, letterSpacing: "0.15em", color: GR, textTransform: "uppercase", marginTop: 20, marginBottom: 6 }}>
+                  Aggiungi giocatore
+                </label>
+                <div style={{ display: "flex", gap: 0, marginBottom: 20 }}>
+                  <input
+                    id="new-player"
+                    name="newPlayer"
+                    type="text"
+                    value={newPlayer}
+                    onChange={e => setNewPlayer(e.target.value)}
+                    placeholder="Nome"
+                    autoComplete="off"
+                    style={{ flex: 1, height: 48, background: LG, border: "none", padding: "0 12px", fontSize: 14, fontWeight: 300, fontFamily: "inherit", color: K0, outline: "none" }}
+                  />
+                  <button type="submit" aria-label="Aggiungi giocatore" style={{ width: 48, height: 48, background: K0, color: "#fff", border: "none", fontFamily: "inherit", fontSize: 20, fontWeight: 300, cursor: "pointer", flexShrink: 0 }}>+</button>
                 </div>
               </form>
             </>
@@ -458,8 +466,8 @@ export default function App() {
 
       </main>
 
-      {/* ── BOTTOM NAV ─────────────────────────────────────────────── */}
-      <nav aria-label="Navigazione principale" style={{ position: "fixed", bottom: 0, left: "50%", transform: "translateX(-50%)", width: "100%", maxWidth: 600, background: "#fff", borderTop: `1.5px solid ${K0}`, display: "flex", zIndex: 100, paddingBottom: "env(safe-area-inset-bottom)" }}>
+      {/* ── BOTTOM NAV — Figma: 72px tall ───────────────────────────── */}
+      <nav aria-label="Navigazione principale" style={{ position: "fixed", bottom: 0, left: "50%", transform: "translateX(-50%)", width: "100%", maxWidth: 600, height: 72, background: "#fff", borderTop: `1.5px solid ${K0}`, display: "flex", zIndex: 100, paddingBottom: "env(safe-area-inset-bottom)" }}>
         {([
           { id: "standings", label: "Classifica", icon: "◈" },
           { id: "match",     label: "Partita",    icon: "◉" },
@@ -467,9 +475,9 @@ export default function App() {
         ] as const).map(t => {
           const active = view === t.id || (view === "result" && t.id === "standings");
           return (
-            <button key={t.id} type="button" onClick={() => setView(t.id)} aria-current={active ? "page" : undefined} style={{ flex: 1, background: active ? Y : "#fff", border: "none", borderRight: t.id !== "history" ? `1.5px solid ${K0}` : "none", padding: "14px 0 12px", cursor: "pointer", fontFamily: "inherit", display: "flex", flexDirection: "column", alignItems: "center", gap: 3, minHeight: 56 }}>
-              <span aria-hidden="true" style={{ fontSize: 16, color: K0 }}>{t.icon}</span>
-              <span style={{ fontSize: 10, letterSpacing: "0.2em", textTransform: "uppercase", color: K0, fontWeight: active ? 500 : 300 }}>{t.label}</span>
+            <button key={t.id} type="button" onClick={() => setView(t.id)} aria-current={active ? "page" : undefined} style={{ flex: 1, height: 71, background: active ? Y : "#fff", border: "none", borderRight: t.id !== "history" ? `1.5px solid ${K0}` : "none", cursor: "pointer", fontFamily: "inherit", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 8, position: "relative" }}>
+              <span aria-hidden="true" style={{ fontSize: 16, fontWeight: 300, color: K0, lineHeight: 1 }}>{t.icon}</span>
+              <span style={{ fontSize: 8, fontWeight: 500, letterSpacing: "0.1em", textTransform: "uppercase", color: K0, lineHeight: 1 }}>{t.label}</span>
             </button>
           );
         })}
