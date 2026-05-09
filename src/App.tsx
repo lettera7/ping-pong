@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, CSSProperties } from "react";
+import { useState, useEffect, useCallback, CSSProperties, useMemo } from "react";
 
 const K = 24;
 const SCRIPT_URL = "https://script.google.com/macros/s/AKfycbyqms0XJa93Q48ruSOnYgfm4hi4HJ3B5jLXoZkk2GFIeDFO1eE23glP1RNkZ044vPAj/exec";
@@ -53,6 +53,8 @@ type RawMatch = { date: string; playerA: string; playerB: string; scoreA: number
 type Match = RawMatch & { id: number; winner: string; rA: number; rB: number; newA: number; newB: number; dA: number; dB: number };
 type PlayerStats = { rating: number; wins: number; losses: number; matches: number };
 type GameState = { players: Record<string, PlayerStats>; matches: Match[] };
+type BulletinMeta = { id: string; month: number; year: number; title: string; status: "draft" | "published"; generated_at: string; published_at: string | null };
+type BulletinFull = BulletinMeta & { content: string; standings_snapshot: unknown; matches_snapshot: unknown };
 
 function replayMatches(rawMatches: RawMatch[]): GameState {
   const players: Record<string, PlayerStats> = {};
@@ -137,8 +139,18 @@ function Toast({ msg }: { msg: string }) {
 // ── Main App ──────────────────────────────────────────────────────────────
 export default function App() {
   const [state, setState] = useState<GameState | null>(null);
-  const [view, setView] = useState<"standings" | "match" | "history" | "result">("standings");
+  const [view, setView] = useState<"standings" | "match" | "bulletin" | "result">("standings");
   const [standingsTab, setStandingsTab] = useState<"current" | "history">("current");
+  const [bulletinTab, setBulletinTab] = useState<"bollettino" | "storico">("bollettino");
+  const [bulletins, setBulletins] = useState<BulletinMeta[]>([]);
+  const [currentBulletin, setCurrentBulletin] = useState<BulletinFull | null>(null);
+  const [expandedArchive, setExpandedArchive] = useState<BulletinFull | null>(null);
+  const [bulletinLoading, setBulletinLoading] = useState(false);
+  const [bulletinError, setBulletinError] = useState<string | null>(null);
+  const [generating, setGenerating] = useState(false);
+  const [publishing, setPublishing] = useState(false);
+  const [storPlayer, setStorPlayer] = useState("");
+  const [storMonth, setStorMonth] = useState("");
   const [pA, setPA] = useState(""); const [pB, setPB] = useState("");
   const [sA, setSA] = useState(0); const [sB, setSB] = useState(0);
   const [newPlayer, setNewPlayer] = useState("");
@@ -171,6 +183,69 @@ export default function App() {
   }, []);
 
   useEffect(() => { loadData(); }, [loadData]);
+
+  const loadBulletins = useCallback(async () => {
+    setBulletinLoading(true);
+    setBulletinError(null);
+    try {
+      const res = await fetch("/api/bulletins");
+      if (!res.ok) throw new Error((await res.json()).error ?? "Errore API");
+      const data: BulletinMeta[] = await res.json();
+      setBulletins(data);
+      const now = new Date();
+      const cur = data.find(b => b.month === now.getMonth() + 1 && b.year === now.getFullYear());
+      if (cur) {
+        const r = await fetch(`/api/bulletins?id=${cur.id}`);
+        if (r.ok) setCurrentBulletin(await r.json());
+      } else {
+        setCurrentBulletin(null);
+      }
+    } catch (e: unknown) {
+      setBulletinError(e instanceof Error ? e.message : "Errore nel caricamento del bollettino");
+    } finally {
+      setBulletinLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { if (view === "bulletin") loadBulletins(); }, [view, loadBulletins]);
+
+  async function generateBulletin() {
+    setGenerating(true);
+    try {
+      const res = await fetch("/api/generate", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({}) });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Errore generazione");
+      showFlash("Bollettino generato");
+      await loadBulletins();
+    } catch (e: unknown) {
+      showFlash(e instanceof Error ? e.message : "Errore");
+    } finally {
+      setGenerating(false);
+    }
+  }
+
+  async function publishBulletin(id: string, action: "publish" | "unpublish") {
+    setPublishing(true);
+    try {
+      const res = await fetch("/api/bulletins", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action, id }) });
+      if (!res.ok) throw new Error((await res.json()).error ?? "Errore");
+      showFlash(action === "publish" ? "Bollettino pubblicato" : "Bollettino ritirato");
+      setExpandedArchive(null);
+      await loadBulletins();
+    } catch (e: unknown) {
+      showFlash(e instanceof Error ? e.message : "Errore");
+    } finally {
+      setPublishing(false);
+    }
+  }
+
+  async function loadArchiveBulletin(b: BulletinMeta) {
+    if (expandedArchive?.id === b.id) { setExpandedArchive(null); return; }
+    try {
+      const r = await fetch(`/api/bulletins?id=${b.id}`);
+      if (r.ok) setExpandedArchive(await r.json());
+    } catch { /* silent */ }
+  }
 
   async function saveMatch(match: Match) {
     setSaving(true);
@@ -216,6 +291,23 @@ export default function App() {
     setState({ ...state, players: { ...state.players, [name]: { rating: 1000, wins: 0, losses: 0, matches: 0 } } });
     setNewPlayer(""); showFlash(name + " aggiunto");
   }
+
+  const storAvailMonths = useMemo(() => {
+    if (!state) return [];
+    return [...new Set(state.matches.map(m => {
+      const p = m.date.split("/");
+      return p.length === 3 ? `${p[1]}/${p[2]}` : "";
+    }).filter(Boolean))].sort().reverse();
+  }, [state]);
+
+  const storFilteredMatches = useMemo(() => {
+    if (!state) return [];
+    return [...state.matches].reverse().filter(m => {
+      if (storPlayer && m.playerA !== storPlayer && m.playerB !== storPlayer) return false;
+      if (storMonth) { const p = m.date.split("/"); if (p.length !== 3 || `${p[1]}/${p[2]}` !== storMonth) return false; }
+      return true;
+    });
+  }, [state, storPlayer, storMonth]);
 
   const W: CSSProperties = { minHeight: "100dvh", background: "#fff", color: K0, fontFamily: "'Lettera7Diatype', 'Helvetica Neue', sans-serif", maxWidth: 600, margin: "0 auto", paddingBottom: 72, position: "relative" };
 
@@ -502,6 +594,192 @@ export default function App() {
         </div>
       )}
 
+      {/* ── BULLETIN ─────────────────────────────────────────────── */}
+      {view === "bulletin" && (() => {
+        const now = new Date();
+        const MONTHS_IT = ["Gennaio","Febbraio","Marzo","Aprile","Maggio","Giugno","Luglio","Agosto","Settembre","Ottobre","Novembre","Dicembre"];
+        const pastPublished = bulletins.filter(b => b.status === "published" && !(b.month === now.getMonth() + 1 && b.year === now.getFullYear()));
+
+        // Storico partite data (lazy — from game state)
+        const allPlayers = state ? Object.keys(state.players).sort() : [];
+
+        return (
+          <div>
+            {/* Black header */}
+            <div style={{ background: K0, padding: "13px 20px 16px", borderBottom: `1.5px solid ${K0}` }}>
+              <div style={{ fontSize: 8, fontWeight: 300, letterSpacing: "0.2em", color: GR_ON_DARK, textTransform: "uppercase", marginBottom: 8 }}>Lunch Ladder</div>
+              <h1 style={{ fontSize: 36, fontWeight: 500, color: "#fff", letterSpacing: "-0.02em", lineHeight: 1, fontFamily: "inherit", margin: 0 }}>Bollettino</h1>
+            </div>
+
+            {/* Sub-tabs */}
+            <div role="tablist" aria-label="Sezione bollettino" style={{ display: "flex", height: 48, borderBottom: `1.5px solid ${K0}` }}>
+              {(["bollettino", "storico"] as const).map(t => {
+                const active = bulletinTab === t;
+                return (
+                  <button key={t} type="button" role="tab" aria-selected={active} onClick={() => setBulletinTab(t)}
+                    style={{ flex: 1, height: 48, background: active ? Y : "#fff", border: "none", borderRight: t === "bollettino" ? `1.5px solid ${K0}` : "none", fontFamily: "inherit", fontSize: 12, fontWeight: 500, textTransform: "uppercase", cursor: "pointer", color: active ? K0 : GR_LIGHT }}>
+                    {t === "bollettino" ? "Bollettino AI" : "Storico partite"}
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* ── BOLLETTINO SUB-TAB ── */}
+            {bulletinTab === "bollettino" && (
+              <div>
+                {/* Current month section */}
+                <div style={{ borderBottom: `1.5px solid ${K0}` }}>
+                  <div style={{ padding: "16px 20px 12px", display: "flex", alignItems: "baseline", justifyContent: "space-between" }}>
+                    <span style={{ fontSize: 10, fontWeight: 500, textTransform: "uppercase", letterSpacing: "0.1em", color: GR_LIGHT }}>
+                      {MONTHS_IT[now.getMonth()]} {now.getFullYear()}
+                    </span>
+                    {currentBulletin && (
+                      <span style={{ fontSize: 9, fontWeight: 500, letterSpacing: "0.1em", textTransform: "uppercase", padding: "2px 8px", background: currentBulletin.status === "published" ? K0 : Y, color: currentBulletin.status === "published" ? "#fff" : K0 }}>
+                        {currentBulletin.status === "published" ? "Pubblicato" : "Bozza"}
+                      </span>
+                    )}
+                  </div>
+
+                  {bulletinLoading && (
+                    <div style={{ padding: "32px 20px", textAlign: "center", fontSize: 11, color: GR_LIGHT, letterSpacing: "0.1em", textTransform: "uppercase" }}>Caricamento…</div>
+                  )}
+
+                  {!bulletinLoading && bulletinError && (
+                    <div style={{ padding: "16px 20px 20px" }}>
+                      <div style={{ fontSize: 12, color: LOSS_COLOR, marginBottom: 12 }}>{bulletinError}</div>
+                      <div style={{ fontSize: 11, color: GR_LIGHT, lineHeight: 1.6 }}>
+                        Per attivare il bollettino AI configura le variabili d'ambiente su Vercel:<br />
+                        <code style={{ fontSize: 10, background: LG, padding: "2px 4px" }}>ANTHROPIC_API_KEY</code> · <code style={{ fontSize: 10, background: LG, padding: "2px 4px" }}>SUPABASE_URL</code> · <code style={{ fontSize: 10, background: LG, padding: "2px 4px" }}>SUPABASE_SERVICE_KEY</code>
+                      </div>
+                    </div>
+                  )}
+
+                  {!bulletinLoading && !bulletinError && !currentBulletin && (
+                    <div style={{ padding: "16px 20px 20px" }}>
+                      <p style={{ fontSize: 13, color: GR, lineHeight: 1.6, marginBottom: 20 }}>
+                        Nessun bollettino per questo mese. Generane uno con AI.
+                      </p>
+                      <button type="button" onClick={generateBulletin} disabled={generating} style={bigBtn(generating ? GR : K0, "#fff")}>
+                        {generating ? "Generazione in corso…" : "Genera bollettino"}
+                      </button>
+                    </div>
+                  )}
+
+                  {!bulletinLoading && !bulletinError && currentBulletin && (
+                    <div>
+                      <div style={{ padding: "0 20px 20px" }}>
+                        {currentBulletin.content.split("\n\n").map((para, i) => (
+                          <p key={i} style={{ fontSize: 14, lineHeight: 1.7, color: K0, margin: 0, marginBottom: 14, fontWeight: para === para.toUpperCase() && para.length < 80 ? 500 : 300 }}>
+                            {para}
+                          </p>
+                        ))}
+                      </div>
+                      <div style={{ padding: "0 20px 20px", display: "flex", flexDirection: "column", gap: 12 }}>
+                        {currentBulletin.status === "draft" && (
+                          <button type="button" onClick={() => publishBulletin(currentBulletin.id, "publish")} disabled={publishing} style={bigBtn(K0, "#fff")}>
+                            {publishing ? "Pubblicazione…" : "Pubblica bollettino"}
+                          </button>
+                        )}
+                        {currentBulletin.status === "published" && (
+                          <button type="button" onClick={() => publishBulletin(currentBulletin.id, "unpublish")} disabled={publishing} style={bigBtn(LG, K0)}>
+                            {publishing ? "…" : "Ritira bozza"}
+                          </button>
+                        )}
+                        <button type="button" onClick={generateBulletin} disabled={generating} style={bigBtn(generating ? GR : Y, K0)}>
+                          {generating ? "Generazione in corso…" : "Rigenera"}
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* Archive */}
+                {pastPublished.length > 0 && (
+                  <div>
+                    <div style={{ padding: "12px 20px 8px", fontSize: 9, fontWeight: 500, textTransform: "uppercase", letterSpacing: "0.15em", color: GR_LIGHT }}>
+                      Archivio
+                    </div>
+                    {pastPublished.map(b => (
+                      <div key={b.id} style={{ borderBottom: `1.5px solid #e8e8e8` }}>
+                        <button type="button" onClick={() => loadArchiveBulletin(b)}
+                          style={{ width: "100%", height: 52, background: "#fff", border: "none", cursor: "pointer", display: "flex", alignItems: "center", padding: "0 20px", fontFamily: "inherit", textAlign: "left" }}>
+                          <span style={{ flex: 1, fontSize: 15, fontWeight: 500, color: K0 }}>{b.title}</span>
+                          <span aria-hidden="true" style={{ fontSize: 14, color: GR_LIGHT, marginLeft: 8 }}>{expandedArchive?.id === b.id ? "↑" : "↓"}</span>
+                        </button>
+                        {expandedArchive?.id === b.id && (
+                          <div style={{ padding: "0 20px 20px" }}>
+                            {expandedArchive.content.split("\n\n").map((para, i) => (
+                              <p key={i} style={{ fontSize: 13, lineHeight: 1.7, color: K0, margin: 0, marginBottom: 12, fontWeight: para === para.toUpperCase() && para.length < 80 ? 500 : 300 }}>
+                                {para}
+                              </p>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* ── STORICO SUB-TAB ── */}
+            {bulletinTab === "storico" && (
+              <div>
+                {/* Filters */}
+                <div style={{ display: "flex", gap: 0, borderBottom: `1.5px solid ${K0}` }}>
+                  <div style={{ flex: 1, position: "relative", borderRight: `1.5px solid ${K0}` }}>
+                    <select value={storPlayer} onChange={e => setStorPlayer(e.target.value)} aria-label="Filtra per giocatore"
+                      style={{ width: "100%", height: 48, background: storPlayer ? Y : "#fff", border: "none", padding: "0 28px 0 16px", fontSize: 12, fontWeight: 500, fontFamily: "inherit", color: K0, appearance: "none", cursor: "pointer" }}>
+                      <option value="">Tutti i giocatori</option>
+                      {allPlayers.map(p => <option key={p} value={p}>{p}</option>)}
+                    </select>
+                    <span aria-hidden="true" style={{ position: "absolute", right: 10, top: "50%", transform: "translateY(-50%)", fontSize: 12, pointerEvents: "none", color: GR_LIGHT }}>▾</span>
+                  </div>
+                  <div style={{ flex: 1, position: "relative" }}>
+                    <select value={storMonth} onChange={e => setStorMonth(e.target.value)} aria-label="Filtra per mese"
+                      style={{ width: "100%", height: 48, background: storMonth ? Y : "#fff", border: "none", padding: "0 28px 0 16px", fontSize: 12, fontWeight: 500, fontFamily: "inherit", color: K0, appearance: "none", cursor: "pointer" }}>
+                      <option value="">Tutti i mesi</option>
+                      {storAvailMonths.map(m => { const [mm, yy] = m.split("/"); return <option key={m} value={m}>{MONTHS_IT[parseInt(mm)-1]} {yy}</option>; })}
+                    </select>
+                    <span aria-hidden="true" style={{ position: "absolute", right: 10, top: "50%", transform: "translateY(-50%)", fontSize: 12, pointerEvents: "none", color: GR_LIGHT }}>▾</span>
+                  </div>
+                </div>
+
+                <ol style={{ listStyle: "none", padding: 0, margin: 0 }} aria-label="Elenco partite">
+                  {storFilteredMatches.map((m) => {
+                    const winA = m.winner === m.playerA;
+                    return (
+                      <li key={m.id} style={{ display: "flex", alignItems: "flex-start", padding: "10px 20px", borderBottom: `1.5px solid #e8e8e8`, minHeight: 52 }}>
+                        <div style={{ width: 54, flexShrink: 0, paddingTop: 16 }}>
+                          <time style={{ fontSize: 8, fontWeight: 300, color: GR_LIGHT, letterSpacing: "0.05em" }}>{formatDate(m.date)}</time>
+                        </div>
+                        <div style={{ flex: 1 }}>
+                          <div style={{ display: "flex", alignItems: "baseline", lineHeight: 1 }}>
+                            <span style={{ fontSize: 20, fontWeight: winA ? 500 : 300, color: winA ? K0 : GR_LIGHT }}>{m.playerA}</span>
+                            <span aria-hidden="true" style={{ fontSize: 15, fontWeight: 300, color: "#dedede", margin: "0 6px" }}>·</span>
+                            <span style={{ fontSize: 20, fontWeight: !winA ? 500 : 300, color: !winA ? K0 : GR_LIGHT }}>{m.playerB}</span>
+                          </div>
+                          <div style={{ display: "flex", gap: 8, marginTop: 4 }}>
+                            <span style={{ fontSize: 9, fontWeight: 300, color: m.dA >= 0 ? WIN_COLOR : LOSS_COLOR }}>{m.dA >= 0 ? "+" : ""}{m.dA}</span>
+                            <span style={{ fontSize: 9, fontWeight: 300, color: m.dB >= 0 ? WIN_COLOR : LOSS_COLOR }}>{m.dB >= 0 ? "+" : ""}{m.dB}</span>
+                          </div>
+                        </div>
+                        <div style={{ fontSize: 20, fontWeight: 500, lineHeight: 1, paddingTop: 2, flexShrink: 0 }} aria-label={`${m.scoreA} a ${m.scoreB}`}>
+                          {m.scoreA}–{m.scoreB}
+                        </div>
+                      </li>
+                    );
+                  })}
+                  {storFilteredMatches.length === 0 && (
+                    <li style={{ padding: "40px 20px", textAlign: "center", fontSize: 13, color: GR }}>Nessuna partita trovata</li>
+                  )}
+                </ol>
+              </div>
+            )}
+          </div>
+        );
+      })()}
+
       </main>
 
       {/* ── BOTTOM NAV — Figma: 72px, 8px Medium labels, 16px icons ── */}
@@ -509,12 +787,12 @@ export default function App() {
         {([
           { id: "standings", label: "Classifica", icon: "◈" },
           { id: "match",     label: "Partita",    icon: "◉" },
-          { id: "history",   label: "Storico",    icon: "◫" },
+          { id: "bulletin",  label: "Bollettino", icon: "◎" },
         ] as const).map(t => {
           const active = view === t.id || (view === "result" && t.id === "standings");
           return (
             <button key={t.id} type="button" onClick={() => setView(t.id)} aria-current={active ? "page" : undefined}
-              style={{ flex: 1, height: 71, background: active ? Y : "#fff", border: "none", borderRight: t.id !== "history" ? `1.5px solid ${K0}` : "none", cursor: "pointer", fontFamily: "inherit", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 8 }}>
+              style={{ flex: 1, height: 71, background: active ? Y : "#fff", border: "none", borderRight: t.id !== "bulletin" ? `1.5px solid ${K0}` : "none", cursor: "pointer", fontFamily: "inherit", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 8 }}>
               <span aria-hidden="true" style={{ fontSize: 16, fontWeight: 300, color: K0, lineHeight: 1 }}>{t.icon}</span>
               <span style={{ fontSize: 8, fontWeight: 500, letterSpacing: "0.1em", textTransform: "uppercase", color: K0, lineHeight: 1 }}>{t.label}</span>
             </button>

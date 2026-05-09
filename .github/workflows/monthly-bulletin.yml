@@ -1,0 +1,45 @@
+name: Genera Bollettino Mensile
+
+on:
+  schedule:
+    # Ogni 1° del mese alle 08:00 UTC
+    - cron: "0 8 1 * *"
+  workflow_dispatch:
+    inputs:
+      month:
+        description: "Mese (1-12). Lascia vuoto per il mese corrente."
+        required: false
+      year:
+        description: "Anno (es. 2026). Lascia vuoto per l'anno corrente."
+        required: false
+
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Genera bollettino del mese
+        run: |
+          BODY="{}"
+          if [ -n "${{ github.event.inputs.month }}" ]; then
+            BODY=$(echo "$BODY" | jq --argjson m ${{ github.event.inputs.month }} '. + {month: $m}')
+          fi
+          if [ -n "${{ github.event.inputs.year }}" ]; then
+            BODY=$(echo "$BODY" | jq --argjson y ${{ github.event.inputs.year }} '. + {year: $y}')
+          fi
+
+          HTTP_STATUS=$(curl -s -o /tmp/response.json -w "%{http_code}" \
+            -X POST \
+            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
+            -H "Content-Type: application/json" \
+            -d "$BODY" \
+            "${{ secrets.VERCEL_APP_URL }}/api/generate")
+
+          echo "HTTP status: $HTTP_STATUS"
+          cat /tmp/response.json
+
+          if [ "$HTTP_STATUS" != "200" ]; then
+            echo "Generazione fallita con status $HTTP_STATUS"
+            exit 1
+          fi
+
+          echo "Bollettino generato con successo"
