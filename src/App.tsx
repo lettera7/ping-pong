@@ -144,11 +144,15 @@ export default function App() {
   const [bulletinTab, setBulletinTab] = useState<"bollettino" | "storico">("bollettino");
   const [bulletins, setBulletins] = useState<BulletinMeta[]>([]);
   const [currentBulletin, setCurrentBulletin] = useState<BulletinFull | null>(null);
+  const [featuredBulletin, setFeaturedBulletin] = useState<BulletinFull | null>(null);
   const [expandedArchive, setExpandedArchive] = useState<BulletinFull | null>(null);
   const [bulletinLoading, setBulletinLoading] = useState(false);
   const [bulletinError, setBulletinError] = useState<string | null>(null);
-  const [generating, setGenerating] = useState(false);
+  const [generating, setGenerating] = useState<string | null>(null);
   const [publishing, setPublishing] = useState(false);
+  const now = new Date();
+  const [genMonth, setGenMonth] = useState(now.getMonth() === 0 ? 12 : now.getMonth());
+  const [genYear, setGenYear] = useState(now.getMonth() === 0 ? now.getFullYear() - 1 : now.getFullYear());
   const [storPlayer, setStorPlayer] = useState("");
   const [storMonth, setStorMonth] = useState("");
   const [pA, setPA] = useState(""); const [pB, setPB] = useState("");
@@ -192,13 +196,27 @@ export default function App() {
       if (!res.ok) throw new Error((await res.json()).error ?? "Errore API");
       const data: BulletinMeta[] = await res.json();
       setBulletins(data);
-      const now = new Date();
-      const cur = data.find(b => b.month === now.getMonth() + 1 && b.year === now.getFullYear());
+      const n = new Date();
+      const curMonth = n.getMonth() + 1, curYear = n.getFullYear();
+
+      // Current month's bulletin (might not exist yet)
+      const cur = data.find(b => b.month === curMonth && b.year === curYear);
       if (cur) {
         const r = await fetch(`/api/bulletins?id=${cur.id}`);
         if (r.ok) setCurrentBulletin(await r.json());
+        else setCurrentBulletin(null);
       } else {
         setCurrentBulletin(null);
+      }
+
+      // Featured = most recent published (excluding current month)
+      const featured = data.find(b => b.status === "published" && !(b.month === curMonth && b.year === curYear));
+      if (featured) {
+        const r = await fetch(`/api/bulletins?id=${featured.id}`);
+        if (r.ok) setFeaturedBulletin(await r.json());
+        else setFeaturedBulletin(null);
+      } else {
+        setFeaturedBulletin(null);
       }
     } catch (e: unknown) {
       setBulletinError(e instanceof Error ? e.message : "Errore nel caricamento del bollettino");
@@ -209,10 +227,12 @@ export default function App() {
 
   useEffect(() => { if (view === "bulletin") loadBulletins(); }, [view, loadBulletins]);
 
-  async function generateBulletin() {
-    setGenerating(true);
+  async function generateBulletin(month?: number, year?: number) {
+    const key = month && year ? `${month}/${year}` : "current";
+    setGenerating(key);
     try {
-      const res = await fetch("/api/generate", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({}) });
+      const body = month && year ? { month, year } : {};
+      const res = await fetch("/api/generate", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "Errore generazione");
       showFlash("Bollettino generato");
@@ -220,7 +240,7 @@ export default function App() {
     } catch (e: unknown) {
       showFlash(e instanceof Error ? e.message : "Errore");
     } finally {
-      setGenerating(false);
+      setGenerating(null);
     }
   }
 
@@ -596,12 +616,31 @@ export default function App() {
 
       {/* ── BULLETIN ─────────────────────────────────────────────── */}
       {view === "bulletin" && (() => {
-        const now = new Date();
         const MONTHS_IT = ["Gennaio","Febbraio","Marzo","Aprile","Maggio","Giugno","Luglio","Agosto","Settembre","Ottobre","Novembre","Dicembre"];
-        const pastPublished = bulletins.filter(b => b.status === "published" && !(b.month === now.getMonth() + 1 && b.year === now.getFullYear()));
-
-        // Storico partite data (lazy — from game state)
+        const curMonth = now.getMonth() + 1, curYear = now.getFullYear();
         const allPlayers = state ? Object.keys(state.players).sort() : [];
+
+        // Archive = all bulletins except current month and featured (already shown above)
+        const archiveBulletins = bulletins.filter(b =>
+          !(b.month === curMonth && b.year === curYear) &&
+          b.id !== featuredBulletin?.id
+        );
+
+        // Available years for generate form
+        const genYears = [2025, 2026];
+
+        function BulletinContent({ content, fontSize = 14 }: { content: string; fontSize?: number }) {
+          return (
+            <>
+              {content.split("\n\n").filter(p => p.trim()).map((para, i) => (
+                <p key={i} style={{ fontSize, lineHeight: 1.75, color: K0, margin: 0, marginBottom: 16,
+                  fontWeight: para.trim() === para.trim().toUpperCase() && para.trim().length < 80 ? 500 : 300 }}>
+                  {para.trim()}
+                </p>
+              ))}
+            </>
+          );
+        }
 
         return (
           <div>
@@ -627,97 +666,163 @@ export default function App() {
             {/* ── BOLLETTINO SUB-TAB ── */}
             {bulletinTab === "bollettino" && (
               <div>
-                {/* Current month section */}
-                <div style={{ borderBottom: `1.5px solid ${K0}` }}>
-                  <div style={{ padding: "16px 20px 12px", display: "flex", alignItems: "baseline", justifyContent: "space-between" }}>
-                    <span style={{ fontSize: 10, fontWeight: 500, textTransform: "uppercase", letterSpacing: "0.1em", color: GR_LIGHT }}>
-                      {MONTHS_IT[now.getMonth()]} {now.getFullYear()}
-                    </span>
-                    {currentBulletin && (
-                      <span style={{ fontSize: 9, fontWeight: 500, letterSpacing: "0.1em", textTransform: "uppercase", padding: "2px 8px", background: currentBulletin.status === "published" ? K0 : Y, color: currentBulletin.status === "published" ? "#fff" : K0 }}>
-                        {currentBulletin.status === "published" ? "Pubblicato" : "Bozza"}
-                      </span>
-                    )}
+                {/* Loading / error */}
+                {bulletinLoading && (
+                  <div style={{ padding: "48px 20px", textAlign: "center", fontSize: 11, color: GR_LIGHT, letterSpacing: "0.1em", textTransform: "uppercase" }}>
+                    Caricamento…
                   </div>
+                )}
+                {!bulletinLoading && bulletinError && (
+                  <div style={{ padding: "24px 20px", borderBottom: `1.5px solid #e8e8e8` }}>
+                    <div style={{ fontSize: 12, color: LOSS_COLOR, marginBottom: 8 }}>{bulletinError}</div>
+                    <div style={{ fontSize: 11, color: GR_LIGHT, lineHeight: 1.6 }}>
+                      Configura su Vercel: <code style={{ fontSize: 10, background: LG, padding: "2px 4px" }}>ANTHROPIC_API_KEY</code> · <code style={{ fontSize: 10, background: LG, padding: "2px 4px" }}>SUPABASE_URL</code> · <code style={{ fontSize: 10, background: LG, padding: "2px 4px" }}>SUPABASE_SERVICE_KEY</code>
+                    </div>
+                  </div>
+                )}
 
-                  {bulletinLoading && (
-                    <div style={{ padding: "32px 20px", textAlign: "center", fontSize: 11, color: GR_LIGHT, letterSpacing: "0.1em", textTransform: "uppercase" }}>Caricamento…</div>
-                  )}
-
-                  {!bulletinLoading && bulletinError && (
-                    <div style={{ padding: "16px 20px 20px" }}>
-                      <div style={{ fontSize: 12, color: LOSS_COLOR, marginBottom: 12 }}>{bulletinError}</div>
-                      <div style={{ fontSize: 11, color: GR_LIGHT, lineHeight: 1.6 }}>
-                        Per attivare il bollettino AI configura le variabili d'ambiente su Vercel:<br />
-                        <code style={{ fontSize: 10, background: LG, padding: "2px 4px" }}>ANTHROPIC_API_KEY</code> · <code style={{ fontSize: 10, background: LG, padding: "2px 4px" }}>SUPABASE_URL</code> · <code style={{ fontSize: 10, background: LG, padding: "2px 4px" }}>SUPABASE_SERVICE_KEY</code>
+                {!bulletinLoading && !bulletinError && (
+                  <>
+                    {/* ── MESE IN CORSO ── */}
+                    {!currentBulletin ? (
+                      <div style={{ background: LG, padding: "28px 20px 32px", borderBottom: `1.5px solid ${K0}` }}>
+                        <div style={{ fontSize: 9, fontWeight: 500, textTransform: "uppercase", letterSpacing: "0.15em", color: GR_LIGHT, marginBottom: 14 }}>
+                          {MONTHS_IT[curMonth - 1]} {curYear} · In corso
+                        </div>
+                        <p style={{ fontSize: 24, fontWeight: 500, lineHeight: 1.25, color: K0, margin: "0 0 10px" }}>
+                          Le danze sono ancora in corso.
+                        </p>
+                        <p style={{ fontSize: 13, fontWeight: 300, color: GR, lineHeight: 1.65, margin: 0 }}>
+                          Resta sintonizzato per leggere il prossimo bollettino e scoprire il campione del mese.
+                        </p>
                       </div>
-                    </div>
-                  )}
+                    ) : (
+                      <div style={{ borderBottom: `1.5px solid ${K0}` }}>
+                        <div style={{ padding: "16px 20px 8px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                          <span style={{ fontSize: 9, fontWeight: 500, textTransform: "uppercase", letterSpacing: "0.15em", color: GR_LIGHT }}>
+                            {MONTHS_IT[curMonth - 1]} {curYear} · Mese in corso
+                          </span>
+                          <span style={{ fontSize: 9, fontWeight: 500, letterSpacing: "0.1em", textTransform: "uppercase", padding: "2px 8px",
+                            background: currentBulletin.status === "published" ? K0 : Y,
+                            color: currentBulletin.status === "published" ? "#fff" : K0 }}>
+                            {currentBulletin.status === "published" ? "Pubblicato" : "Bozza"}
+                          </span>
+                        </div>
+                        <div style={{ padding: "4px 20px 4px" }}>
+                          <BulletinContent content={currentBulletin.content} fontSize={13} />
+                        </div>
+                        <div style={{ padding: "0 20px 20px", display: "flex", flexDirection: "column", gap: 10 }}>
+                          {currentBulletin.status === "draft" && (
+                            <button type="button" onClick={() => publishBulletin(currentBulletin.id, "publish")} disabled={publishing} style={bigBtn(K0, "#fff")}>
+                              {publishing ? "Pubblicazione…" : "Pubblica"}
+                            </button>
+                          )}
+                          <button type="button" onClick={() => generateBulletin()} disabled={!!generating} style={bigBtn(generating === "current" ? GR : Y, K0)}>
+                            {generating === "current" ? "Generazione in corso…" : "Rigenera"}
+                          </button>
+                        </div>
+                      </div>
+                    )}
 
-                  {!bulletinLoading && !bulletinError && !currentBulletin && (
-                    <div style={{ padding: "16px 20px 20px" }}>
-                      <p style={{ fontSize: 13, color: GR, lineHeight: 1.6, marginBottom: 20 }}>
-                        Nessun bollettino per questo mese. Generane uno con AI.
-                      </p>
-                      <button type="button" onClick={generateBulletin} disabled={generating} style={bigBtn(generating ? GR : K0, "#fff")}>
-                        {generating ? "Generazione in corso…" : "Genera bollettino"}
-                      </button>
-                    </div>
-                  )}
+                    {/* ── ULTIMO BOLLETTINO (featured) ── */}
+                    {featuredBulletin && (
+                      <div style={{ borderBottom: `1.5px solid ${K0}` }}>
+                        <div style={{ padding: "20px 20px 0" }}>
+                          <div style={{ fontSize: 9, fontWeight: 500, textTransform: "uppercase", letterSpacing: "0.15em", color: GR_LIGHT, marginBottom: 6 }}>
+                            {MONTHS_IT[featuredBulletin.month - 1]} {featuredBulletin.year} · Ultimo bollettino
+                          </div>
+                          <h2 style={{ fontSize: 22, fontWeight: 500, letterSpacing: "-0.01em", color: K0, margin: "0 0 20px", fontFamily: "inherit" }}>
+                            {featuredBulletin.title}
+                          </h2>
+                          <BulletinContent content={featuredBulletin.content} fontSize={14} />
+                        </div>
+                        <div style={{ padding: "0 20px 20px" }}>
+                          <button type="button"
+                            onClick={() => generateBulletin(featuredBulletin.month, featuredBulletin.year)}
+                            disabled={!!generating}
+                            style={{ ...bigBtn(LG, GR), marginBottom: 0, fontSize: 13 }}>
+                            {generating === `${featuredBulletin.month}/${featuredBulletin.year}` ? "Rigenerazione…" : "Rigenera questo mese"}
+                          </button>
+                        </div>
+                      </div>
+                    )}
 
-                  {!bulletinLoading && !bulletinError && currentBulletin && (
-                    <div>
-                      <div style={{ padding: "0 20px 20px" }}>
-                        {currentBulletin.content.split("\n\n").map((para, i) => (
-                          <p key={i} style={{ fontSize: 14, lineHeight: 1.7, color: K0, margin: 0, marginBottom: 14, fontWeight: para === para.toUpperCase() && para.length < 80 ? 500 : 300 }}>
-                            {para}
-                          </p>
+                    {/* ── ARCHIVIO ── */}
+                    {archiveBulletins.length > 0 && (
+                      <div>
+                        <div style={{ padding: "16px 20px 8px", fontSize: 9, fontWeight: 500, textTransform: "uppercase", letterSpacing: "0.15em", color: GR_LIGHT }}>
+                          Mesi precedenti
+                        </div>
+                        {archiveBulletins.map(b => (
+                          <div key={b.id} style={{ borderBottom: `1.5px solid #e8e8e8` }}>
+                            <button type="button" onClick={() => loadArchiveBulletin(b)}
+                              style={{ width: "100%", minHeight: 52, background: "#fff", border: "none", cursor: "pointer", display: "flex", alignItems: "center", padding: "14px 20px", fontFamily: "inherit", textAlign: "left", gap: 10 }}>
+                              <div style={{ flex: 1 }}>
+                                <div style={{ fontSize: 15, fontWeight: 500, color: K0, lineHeight: 1 }}>{b.title}</div>
+                                <div style={{ fontSize: 9, fontWeight: 300, color: GR_LIGHT, marginTop: 4, textTransform: "uppercase", letterSpacing: "0.1em" }}>
+                                  {b.status === "published" ? "Pubblicato" : "Bozza"}
+                                </div>
+                              </div>
+                              <span aria-hidden="true" style={{ fontSize: 12, color: GR_LIGHT }}>{expandedArchive?.id === b.id ? "↑" : "↓"}</span>
+                            </button>
+                            {expandedArchive?.id === b.id && (
+                              <div>
+                                <div style={{ padding: "4px 20px 16px" }}>
+                                  <BulletinContent content={expandedArchive.content} fontSize={13} />
+                                </div>
+                                <div style={{ padding: "0 20px 16px", display: "flex", flexDirection: "column", gap: 8 }}>
+                                  {expandedArchive.status === "draft" && (
+                                    <button type="button" onClick={() => publishBulletin(expandedArchive.id, "publish")} disabled={publishing} style={{ ...bigBtn(K0, "#fff"), marginBottom: 0, fontSize: 13 }}>
+                                      {publishing ? "…" : "Pubblica"}
+                                    </button>
+                                  )}
+                                  <button type="button"
+                                    onClick={() => generateBulletin(b.month, b.year)}
+                                    disabled={!!generating}
+                                    style={{ ...bigBtn(LG, GR), marginBottom: 0, fontSize: 13 }}>
+                                    {generating === `${b.month}/${b.year}` ? "Rigenerazione…" : "Rigenera"}
+                                  </button>
+                                </div>
+                              </div>
+                            )}
+                          </div>
                         ))}
                       </div>
-                      <div style={{ padding: "0 20px 20px", display: "flex", flexDirection: "column", gap: 12 }}>
-                        {currentBulletin.status === "draft" && (
-                          <button type="button" onClick={() => publishBulletin(currentBulletin.id, "publish")} disabled={publishing} style={bigBtn(K0, "#fff")}>
-                            {publishing ? "Pubblicazione…" : "Pubblica bollettino"}
-                          </button>
-                        )}
-                        {currentBulletin.status === "published" && (
-                          <button type="button" onClick={() => publishBulletin(currentBulletin.id, "unpublish")} disabled={publishing} style={bigBtn(LG, K0)}>
-                            {publishing ? "…" : "Ritira bozza"}
-                          </button>
-                        )}
-                        <button type="button" onClick={generateBulletin} disabled={generating} style={bigBtn(generating ? GR : Y, K0)}>
-                          {generating ? "Generazione in corso…" : "Rigenera"}
-                        </button>
-                      </div>
-                    </div>
-                  )}
-                </div>
+                    )}
 
-                {/* Archive */}
-                {pastPublished.length > 0 && (
-                  <div>
-                    <div style={{ padding: "12px 20px 8px", fontSize: 9, fontWeight: 500, textTransform: "uppercase", letterSpacing: "0.15em", color: GR_LIGHT }}>
-                      Archivio
-                    </div>
-                    {pastPublished.map(b => (
-                      <div key={b.id} style={{ borderBottom: `1.5px solid #e8e8e8` }}>
-                        <button type="button" onClick={() => loadArchiveBulletin(b)}
-                          style={{ width: "100%", height: 52, background: "#fff", border: "none", cursor: "pointer", display: "flex", alignItems: "center", padding: "0 20px", fontFamily: "inherit", textAlign: "left" }}>
-                          <span style={{ flex: 1, fontSize: 15, fontWeight: 500, color: K0 }}>{b.title}</span>
-                          <span aria-hidden="true" style={{ fontSize: 14, color: GR_LIGHT, marginLeft: 8 }}>{expandedArchive?.id === b.id ? "↑" : "↓"}</span>
-                        </button>
-                        {expandedArchive?.id === b.id && (
-                          <div style={{ padding: "0 20px 20px" }}>
-                            {expandedArchive.content.split("\n\n").map((para, i) => (
-                              <p key={i} style={{ fontSize: 13, lineHeight: 1.7, color: K0, margin: 0, marginBottom: 12, fontWeight: para === para.toUpperCase() && para.length < 80 ? 500 : 300 }}>
-                                {para}
-                              </p>
-                            ))}
-                          </div>
-                        )}
+                    {/* ── GENERA STORICO ── */}
+                    <div style={{ borderTop: `1.5px solid ${K0}`, padding: "20px 20px 32px" }}>
+                      <div style={{ fontSize: 9, fontWeight: 500, textTransform: "uppercase", letterSpacing: "0.15em", color: GR_LIGHT, marginBottom: 16 }}>
+                        Genera bollettino storico
                       </div>
-                    ))}
-                  </div>
+                      <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
+                        {/* Month select */}
+                        <div style={{ flex: 1, position: "relative" }}>
+                          <select value={genMonth} onChange={e => setGenMonth(Number(e.target.value))}
+                            aria-label="Mese da generare"
+                            style={{ width: "100%", height: 48, background: LG, border: "none", borderBottom: `2px solid ${K0}`, padding: "0 28px 0 12px", fontSize: 14, fontWeight: 500, fontFamily: "inherit", color: K0, appearance: "none", cursor: "pointer" }}>
+                            {MONTHS_IT.map((m, i) => <option key={i+1} value={i+1}>{m}</option>)}
+                          </select>
+                          <span aria-hidden="true" style={{ position: "absolute", right: 10, top: "50%", transform: "translateY(-50%)", fontSize: 12, pointerEvents: "none", color: GR_LIGHT }}>▾</span>
+                        </div>
+                        {/* Year select */}
+                        <div style={{ width: 90, position: "relative" }}>
+                          <select value={genYear} onChange={e => setGenYear(Number(e.target.value))}
+                            aria-label="Anno da generare"
+                            style={{ width: "100%", height: 48, background: LG, border: "none", borderBottom: `2px solid ${K0}`, padding: "0 28px 0 12px", fontSize: 14, fontWeight: 500, fontFamily: "inherit", color: K0, appearance: "none", cursor: "pointer" }}>
+                            {genYears.map(y => <option key={y} value={y}>{y}</option>)}
+                          </select>
+                          <span aria-hidden="true" style={{ position: "absolute", right: 10, top: "50%", transform: "translateY(-50%)", fontSize: 12, pointerEvents: "none", color: GR_LIGHT }}>▾</span>
+                        </div>
+                      </div>
+                      <button type="button"
+                        onClick={() => generateBulletin(genMonth, genYear)}
+                        disabled={!!generating}
+                        style={{ ...bigBtn(generating === `${genMonth}/${genYear}` ? GR : K0, "#fff"), marginBottom: 0 }}>
+                        {generating === `${genMonth}/${genYear}` ? "Generazione in corso…" : "Genera"}
+                      </button>
+                    </div>
+                  </>
                 )}
               </div>
             )}
@@ -725,7 +830,6 @@ export default function App() {
             {/* ── STORICO SUB-TAB ── */}
             {bulletinTab === "storico" && (
               <div>
-                {/* Filters */}
                 <div style={{ display: "flex", gap: 0, borderBottom: `1.5px solid ${K0}` }}>
                   <div style={{ flex: 1, position: "relative", borderRight: `1.5px solid ${K0}` }}>
                     <select value={storPlayer} onChange={e => setStorPlayer(e.target.value)} aria-label="Filtra per giocatore"
@@ -744,7 +848,6 @@ export default function App() {
                     <span aria-hidden="true" style={{ position: "absolute", right: 10, top: "50%", transform: "translateY(-50%)", fontSize: 12, pointerEvents: "none", color: GR_LIGHT }}>▾</span>
                   </div>
                 </div>
-
                 <ol style={{ listStyle: "none", padding: 0, margin: 0 }} aria-label="Elenco partite">
                   {storFilteredMatches.map((m) => {
                     const winA = m.winner === m.playerA;
