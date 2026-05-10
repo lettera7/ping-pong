@@ -50,7 +50,17 @@ export default async function handler(req: any, res: any) {
 
       if (!id) return res.status(400).json({ error: "id mancante." });
 
-      if (action === "publish") {
+      if (action === "delete") {
+      const { error } = await supabase
+        .from("bulletins")
+        .delete()
+        .eq("id", id);
+
+      if (error) return res.status(500).json({ error: error.message });
+      return res.status(200).json({ success: true });
+    }
+
+    if (action === "publish") {
         const { error } = await supabase
           .from("bulletins")
           .update({ status: "published", published_at: new Date().toISOString() })

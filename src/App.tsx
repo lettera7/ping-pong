@@ -259,6 +259,20 @@ export default function App() {
     }
   }
 
+  async function deleteBulletin(id: string) {
+    try {
+      const res = await fetch("/api/bulletins", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "delete", id }) });
+      if (!res.ok) throw new Error((await res.json()).error ?? "Errore");
+      showFlash("Bollettino eliminato");
+      setCurrentBulletin(null);
+      setFeaturedBulletin(null);
+      setExpandedArchive(null);
+      await loadBulletins();
+    } catch (e: unknown) {
+      showFlash(e instanceof Error ? e.message : "Errore");
+    }
+  }
+
   async function loadArchiveBulletin(b: BulletinMeta) {
     if (expandedArchive?.id === b.id) { setExpandedArchive(null); return; }
     try {
@@ -720,6 +734,10 @@ export default function App() {
                           <button type="button" onClick={() => generateBulletin()} disabled={!!generating} style={bigBtn(generating === "current" ? GR : Y, K0)}>
                             {generating === "current" ? "Generazione in corso…" : "Rigenera"}
                           </button>
+                          <button type="button" onClick={() => { if (confirm("Eliminare questo bollettino?")) deleteBulletin(currentBulletin.id); }}
+                            style={{ background: "none", border: "none", cursor: "pointer", fontSize: 11, color: LOSS_COLOR, fontFamily: "inherit", letterSpacing: "0.05em", textDecoration: "underline", padding: "4px 0" }}>
+                            Elimina bollettino
+                          </button>
                         </div>
                       </div>
                     )}
@@ -736,12 +754,16 @@ export default function App() {
                           </h2>
                           <BulletinContent content={featuredBulletin.content} fontSize={14} />
                         </div>
-                        <div style={{ padding: "0 20px 20px" }}>
+                        <div style={{ padding: "0 20px 20px", display: "flex", flexDirection: "column", gap: 8 }}>
                           <button type="button"
                             onClick={() => generateBulletin(featuredBulletin.month, featuredBulletin.year)}
                             disabled={!!generating}
                             style={{ ...bigBtn(LG, GR), marginBottom: 0, fontSize: 13 }}>
                             {generating === `${featuredBulletin.month}/${featuredBulletin.year}` ? "Rigenerazione…" : "Rigenera questo mese"}
+                          </button>
+                          <button type="button" onClick={() => { if (confirm("Eliminare questo bollettino?")) deleteBulletin(featuredBulletin.id); }}
+                            style={{ background: "none", border: "none", cursor: "pointer", fontSize: 11, color: LOSS_COLOR, fontFamily: "inherit", letterSpacing: "0.05em", textDecoration: "underline", padding: "4px 0" }}>
+                            Elimina bollettino
                           </button>
                         </div>
                       </div>
@@ -781,6 +803,10 @@ export default function App() {
                                     disabled={!!generating}
                                     style={{ ...bigBtn(LG, GR), marginBottom: 0, fontSize: 13 }}>
                                     {generating === `${b.month}/${b.year}` ? "Rigenerazione…" : "Rigenera"}
+                                  </button>
+                                  <button type="button" onClick={() => { if (confirm("Eliminare questo bollettino?")) deleteBulletin(b.id); }}
+                                    style={{ background: "none", border: "none", cursor: "pointer", fontSize: 11, color: LOSS_COLOR, fontFamily: "inherit", letterSpacing: "0.05em", textDecoration: "underline", padding: "4px 0" }}>
+                                    Elimina bollettino
                                   </button>
                                 </div>
                               </div>
