@@ -218,6 +218,7 @@ CHIUSURA
 export default async function handler(req: any, res: any) {
   if (req.method !== "POST") { res.setHeader("Allow", "POST"); return res.status(405).end(); }
 
+  try {
   const supabaseUrl = process.env.SUPABASE_URL;
   const supabaseServiceKey = process.env.SUPABASE_SERVICE_KEY;
   const anthropicKey = process.env.ANTHROPIC_API_KEY;
@@ -286,19 +287,24 @@ export default async function handler(req: any, res: any) {
     historicalWinner = hist.winner;
   }
 
+  const prompt = buildPrompt(finalStandings, finalMatches, month, year, historicalWinner);
+  if (!prompt.trim()) {
+    return res.status(500).json({ error: "Impossibile generare il prompt: nessun dato disponibile.", standings: finalStandings.length, matches: finalMatches.length });
+  }
+
   const anthropic = new Anthropic({ apiKey: anthropicKey });
   const message = await anthropic.messages.create({
     model: "claude-haiku-4-5-20251001",
     max_tokens: 1200,
     system: SYSTEM_PROMPT,
-    messages: [{ role: "user", content: buildPrompt(finalStandings, finalMatches, month, year, historicalWinner) }],
+    messages: [{ role: "user", content: prompt }],
   });
 
   const content = message.content[0].type === "text" ? message.content[0].text : "";
   const title = `Bollettino ${MONTHS_IT[month - 1]} ${year}`;
 
   const { data, error } = await supabase
-    .from("bulletins")
+    .from(BULLETINS_TABLE)
     .upsert({
       month, year, title, content,
       standings_snapshot: finalStandings,
@@ -312,4 +318,9 @@ export default async function handler(req: any, res: any) {
 
   if (error) return res.status(500).json({ error: error.message });
   return res.status(200).json({ success: true, bulletin: data });
+
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    return res.status(500).json({ error: message });
+  }
 }
