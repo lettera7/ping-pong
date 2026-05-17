@@ -1,9 +1,38 @@
-anthropic>=0.39.0
-ultralytics>=8.3.0
-opencv-python>=4.10.0
-numpy>=1.26.0
-requests>=2.32.0
-python-dotenv>=1.0.0
-Pillow>=10.4.0
-pytesseract>=0.3.13
-rich>=13.7.0
+# ── scoreboard/requirements.txt ───────────────────────────────────────────────
+# Python 3.10+ required.
+# Install with:  pip install -r scoreboard/requirements.txt
+#
+# CPU-only PyTorch wheels are used to keep the image lean.
+# For GPU support replace the torch/torchvision lines with the appropriate
+# CUDA wheel URLs from https://pytorch.org/get-started/locally/
+# ─────────────────────────────────────────────────────────────────────────────
+
+# ── Deep-learning core ────────────────────────────────────────────────────────
+torch==2.3.1
+torchvision==0.18.1
+
+# ── YOLOv8 ───────────────────────────────────────────────────────────────────
+ultralytics==8.2.48
+
+# ── OCR ───────────────────────────────────────────────────────────────────────
+easyocr==1.7.1
+
+# ── Computer vision ───────────────────────────────────────────────────────────
+opencv-python-headless==4.10.0.84
+
+# ── HTTP client ───────────────────────────────────────────────────────────────
+httpx==0.27.0
+
+# ── Environment ───────────────────────────────────────────────────────────────
+python-dotenv==1.0.1
+
+# ── Numerical / image utilities (transitive deps, pinned for reproducibility) ─
+numpy==1.26.4
+Pillow==10.4.0
+scipy==1.13.1
+PyYAML==6.0.1
+tqdm==4.66.4
+shapely==2.0.4
+
+# ── EasyOCR extras ────────────────────────────────────────────────────────────
+python-bidi==0.4.2

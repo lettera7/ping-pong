@@ -1,446 +1,327 @@
-#!/usr/bin/env python3
 """
-Ping-Pong GoPro Scoreboard — runtime multi-agent score tracker.
+scoreboard.py — GoPro RTSP → YOLOv8 → EasyOCR → POST /api/score
+Multi-agent ping-pong scoreboard tracker.
 
-Pipeline:
-  GoPro API/HTTP → VisionWorker (OpenCV + YOLOv8) → OrchestratorAgent → ScoreReporter → /api/score
-
-Multi-agent architecture (runtime):
-  OrchestratorAgent  ←→  Anthropic API (claude-sonnet-4-6)
-       ├── VisionWorker    local inference, no API calls
-       └── ScoreReporter   HTTP client → Vercel /api/score
-
-The Orchestrator uses the LLM only for edge-case validation (unusual score jumps).
-Normal ±1 increments are accepted by fast local rules; the LLM is a safety net.
-
-Stream sources (in order of preference):
-  1. RTSP (if available)
-  2. HTTP MJPEG (GoPro API)
+Agents
+------
+FrameAgent      : captures frames from the GoPro RTSP stream
+DetectionAgent  : detects the scoreboard ROI with YOLOv8, OCRs digit pairs
+ScoreAgent      : debounces readings and POSTs confirmed scores to the API
 """
 
-from __future__ import annotations
-
+import datetime
 import logging
 import os
+import queue
+import re
 import sys
 import threading
 import time
-from dataclasses import dataclass, field
-from pathlib import Path
-from typing import Optional
+from typing import Optional, Tuple
 
 import cv2
-import numpy as np
-import requests
+import httpx
+import easyocr
 from dotenv import load_dotenv
-
-import anthropic
 from ultralytics import YOLO
 
 load_dotenv()
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-    datefmt="%H:%M:%S",
-)
-log = logging.getLogger("scoreboard")
+# ── Configuration ─────────────────────────────────────────────────────────────
 
-# ─── Config ───────────────────────────────────────────────────────────────────
-GOPRO_API_URL   = os.getenv("GOPRO_API_URL",       "http://10.5.5.9:8080")
-RTSP_URL        = os.getenv("GOPRO_RTSP_URL",      "rtsp://10.5.5.9:8554/live")
-SCORE_URL       = os.getenv("VERCEL_SCORE_URL",    "https://ping-pong-7.vercel.app/api/score")
-PLAYER_A        = os.getenv("PLAYER_A",            "PlayerA")
-PLAYER_B        = os.getenv("PLAYER_B",            "PlayerB")
-YOLO_MODEL      = os.getenv("YOLO_MODEL",          "yolov8n.pt")
-CAPTURE_INTERVAL = float(os.getenv("CAPTURE_INTERVAL", "0.5"))
-DEBUG_FRAMES    = os.getenv("DEBUG_FRAMES", "false").lower() == "true"
-CONFIRM_FRAMES  = 5   # consecutive identical readings before a score is accepted
+GOPRO_RTSP_URL: str = os.getenv("GOPRO_RTSP_URL", "rtsp://10.5.5.9:8554/live")
+GOPRO_FPS_LIMIT: float = float(os.getenv("GOPRO_FPS_LIMIT", "2"))
+YOLO_MODEL_PATH: str = os.getenv("YOLO_MODEL_PATH", "scoreboard/best.pt")
+YOLO_CONF_THRESH: float = float(os.getenv("YOLO_CONF_THRESH", "0.6"))
+API_URL: str = os.getenv("API_URL", "").rstrip("/")
+API_SECRET: str = os.getenv("API_SECRET", "")
+PLAYER_A: str = os.getenv("PLAYER_A", "Player A")
+PLAYER_B: str = os.getenv("PLAYER_B", "Player B")
+DEBOUNCE_FRAMES: int = int(os.getenv("DEBOUNCE_FRAMES", "5"))
+SCORE_RESET_THRESHOLD: int = int(os.getenv("SCORE_RESET_THRESHOLD", "3"))
 
+log = logging.getLogger(__name__)
 
-# ─── Data types ───────────────────────────────────────────────────────────────
-@dataclass
-class Score:
-    a: int
-    b: int
-
-    def __eq__(self, other: object) -> bool:
-        return isinstance(other, Score) and self.a == other.a and self.b == other.b
-
-    def __repr__(self) -> str:
-        return f"{self.a}:{self.b}"
-
-    def is_valid(self) -> bool:
-        return 0 <= self.a <= 21 and 0 <= self.b <= 21
+# ── Agents ────────────────────────────────────────────────────────────────────
 
 
-@dataclass
-class PipelineState:
-    last_confirmed:   Optional[Score] = None
-    candidate:        Optional[Score] = None
-    candidate_streak: int = 0
-    submitted_scores: list[dict] = field(default_factory=list)
-    running:          bool = True
+class FrameAgent(threading.Thread):
+    """Captures frames from a GoPro RTSP stream and forwards them to a queue."""
 
+    def __init__(self, out_queue: "queue.Queue[cv2.typing.MatLike]") -> None:
+        super().__init__(name="FrameAgent", daemon=True)
+        self.out_queue = out_queue
+        self.stop_event = threading.Event()
 
-# ─── VisionWorker ─────────────────────────────────────────────────────────────
-class VisionWorker:
-    """
-    Captures frames from GoPro (RTSP or HTTP API) and extracts the current score.
+    def _open_capture(self) -> cv2.VideoCapture:
+        cap = cv2.VideoCapture(GOPRO_RTSP_URL, cv2.CAP_FFMPEG)
+        if not cap.isOpened():
+            log.warning("FrameAgent: could not open RTSP stream: %s", GOPRO_RTSP_URL)
+        return cap
 
-    Detection strategy:
-      1. Crop the top-centre ROI (likely scoreboard position on a GoPro mount).
-      2. Apply adaptive thresholding and contour analysis to find digit blobs.
-      3. Run pytesseract OCR on each digit cluster (falls back to pixel density).
-      4. Parse two numbers separated visually; return Score(a, b).
+    def run(self) -> None:
+        log.info("FrameAgent: starting — %s @ %.1f fps max", GOPRO_RTSP_URL, GOPRO_FPS_LIMIT)
+        cap = self._open_capture()
+        frame_interval = 1.0 / max(GOPRO_FPS_LIMIT, 0.1)
 
-    For production, replace the contour+OCR pipeline with a custom YOLOv8
-    model trained on digit bounding boxes from your specific GoPro setup.
-    """
-
-    def __init__(self, rtsp_url: str, gopro_api_url: str, model_path: str) -> None:
-        self.rtsp_url = rtsp_url
-        self.gopro_api_url = gopro_api_url
-        self._lock    = threading.Lock()
-        self.cap: Optional[cv2.VideoCapture] = None
-        self.stream_source = "unknown"
-        log.info("Loading YOLO model: %s", model_path)
-        self.model = YOLO(model_path)
-        self._connect()
-
-    def _connect(self) -> None:
-        sources = [
-            (self.rtsp_url, "RTSP"),
-            (f"{self.gopro_api_url}/gopro/live/preview", "HTTP MJPEG"),
-        ]
-
-        for url, label in sources:
-            log.info("Attempting %s: %s", label, url)
+        while not self.stop_event.is_set():
+            t0 = time.monotonic()
             try:
-                cap = cv2.VideoCapture(url)
-                if cap.isOpened():
-                    self.cap = cap
-                    self.stream_source = label
-                    log.info("%s stream opened successfully.", label)
-                    return
-            except Exception as e:
-                log.debug("Failed to connect via %s: %s", label, e)
+                ok, frame = cap.read()
+                if not ok or frame is None:
+                    log.warning("FrameAgent: read failed — reopening stream in 5 s")
+                    cap.release()
+                    time.sleep(5)
+                    cap = self._open_capture()
+                    continue
 
-        raise RuntimeError("Unable to connect to any GoPro stream source")
+                # Non-blocking put: drop oldest frame if queue is full
+                if self.out_queue.full():
+                    try:
+                        self.out_queue.get_nowait()
+                    except queue.Empty:
+                        pass
+                self.out_queue.put_nowait(frame)
 
-    def capture_frame(self) -> Optional[np.ndarray]:
-        with self._lock:
-            if self.cap is None or not self.cap.isOpened():
-                try:
-                    self._connect()
-                except RuntimeError:
-                    return None
-            ret, frame = self.cap.read()
-            return frame if ret else None
+            except Exception as exc:  # noqa: BLE001
+                log.warning("FrameAgent: unexpected error: %s", exc)
 
-    def detect_score(self, frame: np.ndarray) -> Optional[Score]:
-        try:
-            return self._extract_score(frame)
-        except Exception as exc:
-            log.debug("Score detection error: %s", exc)
-            return None
+            elapsed = time.monotonic() - t0
+            time.sleep(max(0.0, frame_interval - elapsed))
 
-    def _extract_score(self, frame: np.ndarray) -> Optional[Score]:
-        h, w = frame.shape[:2]
-        # Top-centre strip: upper third, middle half width
-        roi = frame[0 : h // 3, w // 4 : 3 * w // 4]
-
-        gray    = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
-        blurred = cv2.GaussianBlur(gray, (5, 5), 0)
-        _, thresh = cv2.threshold(
-            blurred, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU
-        )
-
-        contours, _ = cv2.findContours(
-            thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
-        )
-        digit_rects: list[tuple[int, int, int, int]] = []
-        for cnt in contours:
-            x, y, cw, ch = cv2.boundingRect(cnt)
-            aspect = cw / max(ch, 1)
-            if 0.2 < aspect < 0.9 and 20 < ch < roi.shape[0] * 0.8 and cw > 10:
-                digit_rects.append((x, y, cw, ch))
-
-        if len(digit_rects) < 2:
-            return None
-
-        digit_rects.sort(key=lambda r: r[0])
-        groups = self._cluster_x(digit_rects)
-        if len(groups) < 2:
-            return None
-
-        digits: list[int] = []
-        for group in groups[:2]:
-            crop = roi[
-                min(r[1] for r in group) : max(r[1] + r[3] for r in group),
-                min(r[0] for r in group) : max(r[0] + r[2] for r in group),
-            ]
-            d = self._ocr_digit(crop)
-            if d is None:
-                return None
-            digits.append(d)
-
-        score = Score(digits[0], digits[1])
-        if DEBUG_FRAMES:
-            self._save_debug(frame, roi, score)
-        return score if score.is_valid() else None
-
-    @staticmethod
-    def _cluster_x(
-        rects: list[tuple[int, int, int, int]], gap: int = 40
-    ) -> list[list[tuple[int, int, int, int]]]:
-        groups: list[list[tuple[int, int, int, int]]] = [[rects[0]]]
-        for r in rects[1:]:
-            prev = groups[-1][-1]
-            if r[0] - (prev[0] + prev[2]) < gap:
-                groups[-1].append(r)
-            else:
-                groups.append([r])
-        return groups
-
-    @staticmethod
-    def _ocr_digit(img: np.ndarray) -> Optional[int]:
-        if img.size == 0:
-            return None
-        img_resized = cv2.resize(img, (28, 56), interpolation=cv2.INTER_AREA)
-        try:
-            import pytesseract
-            from PIL import Image as PILImage
-
-            pil = PILImage.fromarray(img_resized)
-            text = pytesseract.image_to_string(
-                pil, config="--psm 10 -c tessedit_char_whitelist=0123456789"
-            ).strip()
-            return int(text) if text.isdigit() else None
-        except Exception:
-            return None
-
-    @staticmethod
-    def _save_debug(frame: np.ndarray, roi: np.ndarray, score: Score) -> None:
-        debug_dir = Path("debug_frames")
-        debug_dir.mkdir(exist_ok=True)
-        ts = int(time.time() * 1000)
-        cv2.imwrite(str(debug_dir / f"frame_{ts}.jpg"), frame)
-        cv2.imwrite(str(debug_dir / f"roi_{ts}.jpg"), roi)
-        log.debug("Debug frames saved (score %s)", score)
-
-    def release(self) -> None:
-        if self.cap:
-            self.cap.release()
-            self.cap = None
+        cap.release()
+        log.info("FrameAgent: stopped")
 
 
-# ─── ScoreReporter ────────────────────────────────────────────────────────────
-class ScoreReporter:
-    """Sends confirmed scores to the Vercel /api/score endpoint."""
-
-    def __init__(self, score_url: str, player_a: str, player_b: str) -> None:
-        self.score_url = score_url
-        self.player_a  = player_a
-        self.player_b  = player_b
-
-    def report(self, score: Score) -> bool:
-        payload = {
-            "playerA":   self.player_a,
-            "playerB":   self.player_b,
-            "scoreA":    score.a,
-            "scoreB":    score.b,
-            "timestamp": int(time.time() * 1000),
-            "source":    "gopro",
-        }
-        try:
-            resp = requests.post(self.score_url, json=payload, timeout=10)
-            if resp.ok:
-                log.info(
-                    "Score submitted: %s %d – %d %s",
-                    self.player_a, score.a, score.b, self.player_b,
-                )
-                return True
-            log.error("API error %s: %s", resp.status_code, resp.text[:200])
-            return False
-        except requests.RequestException as exc:
-            log.error("Network error submitting score: %s", exc)
-            return False
-
-
-# ─── OrchestratorAgent ────────────────────────────────────────────────────────
-class OrchestratorAgent:
-    """
-    Coordinates VisionWorker and ScoreReporter.
-
-    The LLM (claude-sonnet-4-20250514) is consulted only when a score jump
-    is ambiguous (more than ±1 point change). Normal single-point increments
-    are accepted instantly via fast local rules, keeping latency low.
-    """
-
-    _TOOLS = [
-        {
-            "name": "validate_score_transition",
-            "description": (
-                "Validate whether a score transition is plausible in ping-pong. "
-                "Use when the score changed by more than 1 point. "
-                "Returns {valid: bool, reason: str}."
-            ),
-            "input_schema": {
-                "type": "object",
-                "properties": {
-                    "previous":  {"type": "string", "description": "e.g. '7:5'"},
-                    "candidate": {"type": "string", "description": "e.g. '9:5'"},
-                    "history": {
-                        "type": "array",
-                        "items": {"type": "string"},
-                        "description": "Recent score history (oldest first)",
-                    },
-                },
-                "required": ["previous", "candidate"],
-            },
-        },
-    ]
+class DetectionAgent(threading.Thread):
+    """Runs YOLOv8 on frames, crops the scoreboard ROI, OCRs digit pairs."""
 
     def __init__(
         self,
-        vision:   VisionWorker,
-        reporter: ScoreReporter,
-        state:    PipelineState,
-        api_key:  str,
+        in_queue: "queue.Queue[cv2.typing.MatLike]",
+        out_queue: "queue.Queue[Tuple[int, int, datetime.datetime]]",
     ) -> None:
-        self.vision   = vision
-        self.reporter = reporter
-        self.state    = state
-        self.client   = anthropic.Anthropic(api_key=api_key)
-        self._history: list[str] = []
+        super().__init__(name="DetectionAgent", daemon=True)
+        self.in_queue = in_queue
+        self.out_queue = out_queue
+        self.stop_event = threading.Event()
 
-    # ── Validation ────────────────────────────────────────────────────────────
-
-    def _fast_valid(self, prev: Optional[Score], cand: Score) -> bool:
-        if prev is None:
-            return True
-        da = abs(cand.a - prev.a)
-        db = abs(cand.b - prev.b)
-        return da + db <= 1  # same or ±1 point
-
-    def _llm_valid(self, prev: Score, cand: Score) -> bool:
-        log.info("Ambiguous transition %s → %s, consulting LLM…", prev, cand)
-        try:
-            resp = self.client.messages.create(
-                model="claude-sonnet-4-6",
-                max_tokens=256,
-                tools=self._TOOLS,
-                messages=[
-                    {
-                        "role": "user",
-                        "content": (
-                            f"The scoreboard jumped from {prev} to {cand}. "
-                            f"Recent history: {self._history[-5:]}. "
-                            "Is this a valid ping-pong score transition? "
-                            "Call validate_score_transition."
-                        ),
-                    }
-                ],
-            )
-            for block in resp.content:
-                if block.type == "tool_use" and block.name == "validate_score_transition":
-                    result = block.input  # type: ignore[union-attr]
-                    is_valid: bool = result.get("valid", False)
-                    log.info(
-                        "LLM verdict: valid=%s reason=%s",
-                        is_valid,
-                        result.get("reason", ""),
-                    )
-                    return is_valid
-        except Exception as exc:
-            log.warning("LLM validation failed (%s); accepting score", exc)
-            return True  # fail-open
-        return False
-
-    def _is_valid_transition(self, prev: Optional[Score], cand: Score) -> bool:
-        if self._fast_valid(prev, cand):
-            return True
-        if prev is None:
-            return True
-        return self._llm_valid(prev, cand)
-
-    # ── Pipeline step ─────────────────────────────────────────────────────────
-
-    def step(self) -> None:
-        frame = self.vision.capture_frame()
-        if frame is None:
-            log.warning("No frame from RTSP stream")
-            time.sleep(1.0)
-            return
-
-        detected = self.vision.detect_score(frame)
-        if detected is None:
-            return
-
-        self._history.append(str(detected))
-
-        if detected == self.state.candidate:
-            self.state.candidate_streak += 1
+        # Load YOLOv8 model — fall back to nano weights if custom file missing
+        if os.path.isfile(YOLO_MODEL_PATH):
+            self.model = YOLO(YOLO_MODEL_PATH)
+            log.info("DetectionAgent: loaded model from %s", YOLO_MODEL_PATH)
         else:
-            if not self._is_valid_transition(self.state.last_confirmed, detected):
-                log.debug(
-                    "Rejected transition %s → %s",
-                    self.state.last_confirmed,
-                    detected,
-                )
-                return
-            self.state.candidate        = detected
-            self.state.candidate_streak = 1
+            log.warning(
+                "DetectionAgent: %s not found — falling back to yolov8n.pt (auto-download)",
+                YOLO_MODEL_PATH,
+            )
+            self.model = YOLO("yolov8n.pt")
 
-        if self.state.candidate_streak >= CONFIRM_FRAMES:
-            confirmed = self.state.candidate
-            if confirmed != self.state.last_confirmed:
-                log.info(
-                    "Score confirmed (%d consecutive readings): %s",
-                    self.state.candidate_streak,
-                    confirmed,
-                )
-                if self.reporter.report(confirmed):
-                    self.state.last_confirmed = confirmed
-                    self.state.submitted_scores.append(
-                        {"score": str(confirmed), "ts": time.time()}
-                    )
-            self.state.candidate_streak = 0
+        # Instantiate EasyOCR reader once (expensive init)
+        log.info("DetectionAgent: initialising EasyOCR reader…")
+        self.reader = easyocr.Reader(["en"], gpu=False)
+        log.info("DetectionAgent: EasyOCR ready")
 
-    # ── Main loop ─────────────────────────────────────────────────────────────
+    @staticmethod
+    def _parse_two_ints(ocr_results: list) -> Optional[Tuple[int, int]]:
+        """Extract the first two non-negative integers, sorted left-to-right by x-coordinate."""
+        candidates: list[Tuple[float, int]] = []
+        for bbox, text, _ in ocr_results:
+            # bbox: [[x1,y1],[x2,y1],[x2,y2],[x1,y2]]
+            x_center = (bbox[0][0] + bbox[2][0]) / 2
+            for match in re.findall(r"\b\d+\b", text):
+                candidates.append((x_center, int(match)))
+        candidates.sort(key=lambda c: c[0])
+        if len(candidates) >= 2:
+            return candidates[0][1], candidates[1][1]
+        return None
 
     def run(self) -> None:
-        log.info(
-            "Orchestrator started | %s vs %s | Source: %s",
-            PLAYER_A, PLAYER_B, self.vision.stream_source,
-        )
+        log.info("DetectionAgent: starting")
+        while not self.stop_event.is_set():
+            try:
+                frame = self.in_queue.get(timeout=1)
+            except queue.Empty:
+                continue
+
+            try:
+                results = self.model.predict(frame, conf=YOLO_CONF_THRESH, verbose=False)
+
+                best_box = None
+                best_conf: float = -1.0
+                for result in results:
+                    for box in result.boxes:
+                        cls_id = int(box.cls[0])
+                        class_name: str = result.names.get(cls_id, "")
+                        if "scoreboard" not in class_name.lower():
+                            continue
+                        conf = float(box.conf[0])
+                        if conf > best_conf:
+                            best_conf = conf
+                            best_box = box
+
+                if best_box is None:
+                    log.debug("DetectionAgent: no scoreboard detected in frame")
+                    continue
+
+                x1, y1, x2, y2 = (int(v) for v in best_box.xyxy[0])
+                roi = frame[y1:y2, x1:x2]
+                if roi.size == 0:
+                    log.debug("DetectionAgent: empty ROI — skipping")
+                    continue
+
+                roi_resized = cv2.resize(roi, (320, 160))
+                ocr_results = self.reader.readtext(roi_resized)
+
+                parsed = self._parse_two_ints(ocr_results)
+                if parsed is None:
+                    log.debug("DetectionAgent: could not parse two integers from OCR output")
+                    continue
+
+                score_a, score_b = parsed
+                ts = datetime.datetime.utcnow()
+                log.debug("DetectionAgent: detected score %d – %d", score_a, score_b)
+
+                if self.out_queue.full():
+                    try:
+                        self.out_queue.get_nowait()
+                    except queue.Empty:
+                        pass
+                self.out_queue.put_nowait((score_a, score_b, ts))
+
+            except Exception as exc:  # noqa: BLE001
+                log.warning("DetectionAgent: error processing frame: %s", exc)
+
+        log.info("DetectionAgent: stopped")
+
+
+class ScoreAgent(threading.Thread):
+    """Debounces and deduplicates score readings, then POSTs confirmed scores."""
+
+    def __init__(
+        self, in_queue: "queue.Queue[Tuple[int, int, datetime.datetime]]"
+    ) -> None:
+        super().__init__(name="ScoreAgent", daemon=True)
+        self.in_queue = in_queue
+        self.stop_event = threading.Event()
+
+        self.last_posted: Optional[Tuple[int, int]] = None
+        self.candidate: Optional[Tuple[int, int]] = None
+        self.candidate_count: int = 0
+
+    def _post_score(self, score_a: int, score_b: int, ts: datetime.datetime) -> bool:
+        """POST a confirmed score to the API. Returns True on success."""
+        if not API_URL:
+            log.error("ScoreAgent: API_URL is not set — cannot POST score")
+            return False
+
+        payload = {
+            "player_a": PLAYER_A,
+            "player_b": PLAYER_B,
+            "score_a": score_a,
+            "score_b": score_b,
+            "played_at": ts.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        }
+        headers: dict[str, str] = {}
+        if API_SECRET:
+            headers["Authorization"] = f"Bearer {API_SECRET}"
+
         try:
-            while self.state.running:
-                self.step()
-                time.sleep(CAPTURE_INTERVAL)
-        except KeyboardInterrupt:
-            log.info("Stopped by user.")
-        finally:
-            self.vision.release()
-            scores = [s["score"] for s in self.state.submitted_scores]
-            log.info(
-                "Session ended | %d score(s) submitted: %s",
-                len(scores), scores,
+            response = httpx.post(
+                f"{API_URL}/api/score",
+                json=payload,
+                headers=headers,
+                timeout=10,
             )
+            if response.is_success:
+                log.info(
+                    "ScoreAgent: posted score %d–%d → %s",
+                    score_a, score_b, response.status_code,
+                )
+                return True
+            else:
+                log.warning(
+                    "ScoreAgent: POST failed — status %s body: %s",
+                    response.status_code,
+                    response.text[:200],
+                )
+                return False
+        except httpx.RequestError as exc:
+            log.warning("ScoreAgent: request error: %s", exc)
+            return False
+
+    def run(self) -> None:
+        log.info("ScoreAgent: starting (debounce=%d frames)", DEBOUNCE_FRAMES)
+        while not self.stop_event.is_set():
+            try:
+                score_a, score_b, ts = self.in_queue.get(timeout=1)
+            except queue.Empty:
+                continue
+
+            try:
+                current = (score_a, score_b)
+
+                # Game-reset detection: (0, 0) always resets last_posted
+                if score_a == 0 and score_b == 0:
+                    if self.last_posted != (0, 0):
+                        log.info("ScoreAgent: game reset detected — clearing last_posted")
+                        self.last_posted = None
+
+                # Debounce
+                if current == self.candidate:
+                    self.candidate_count += 1
+                else:
+                    self.candidate = current
+                    self.candidate_count = 1
+
+                if self.candidate_count >= DEBOUNCE_FRAMES and current != self.last_posted:
+                    success = self._post_score(score_a, score_b, ts)
+                    if success:
+                        self.last_posted = current
+                        self.candidate_count = 0  # reset after acceptance
+
+            except Exception as exc:  # noqa: BLE001
+                log.warning("ScoreAgent: error handling score: %s", exc)
+
+        log.info("ScoreAgent: stopped")
 
 
-# ─── Entry point ──────────────────────────────────────────────────────────────
+# ── Entry point ───────────────────────────────────────────────────────────────
+
+
 def main() -> None:
-    api_key = os.getenv("ANTHROPIC_API_KEY")
-    if not api_key:
-        sys.exit("ANTHROPIC_API_KEY not set. Copy .env.example to .env and fill in the values.")
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+        stream=sys.stdout,
+    )
 
-    state      = PipelineState()
-    vision     = VisionWorker(RTSP_URL, GOPRO_API_URL, YOLO_MODEL)
-    reporter   = ScoreReporter(SCORE_URL, PLAYER_A, PLAYER_B)
-    orchestrator = OrchestratorAgent(vision, reporter, state, api_key)
-    orchestrator.run()
+    if not API_URL:
+        log.error("API_URL environment variable is required. Set it in .env or the shell.")
+        sys.exit(1)
+
+    log.info("Starting GoPro Scoreboard pipeline…")
+    log.info("  Stream  : %s", GOPRO_RTSP_URL)
+    log.info("  API     : %s", API_URL)
+    log.info("  Players : %s vs %s", PLAYER_A, PLAYER_B)
+
+    frame_q: "queue.Queue[cv2.typing.MatLike]" = queue.Queue(maxsize=4)
+    detection_q: "queue.Queue[Tuple[int, int, datetime.datetime]]" = queue.Queue(maxsize=16)
+
+    frame_agent = FrameAgent(out_queue=frame_q)
+    detection_agent = DetectionAgent(in_queue=frame_q, out_queue=detection_q)
+    score_agent = ScoreAgent(in_queue=detection_q)
+
+    for agent in (frame_agent, detection_agent, score_agent):
+        agent.daemon = True
+        agent.start()
+
+    try:
+        while True:
+            time.sleep(1)
+    except KeyboardInterrupt:
+        log.info("Shutting down… (Ctrl-C received)")
+        sys.exit(0)
 
 
 if __name__ == "__main__":
