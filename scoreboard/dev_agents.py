@@ -52,17 +52,21 @@ class AgentUI:
         _console.print()
         _console.print(Rule(
             "[bold cyan]🏓  GoPro Scoreboard[/]  [dim]·[/]  "
-            "[bold white]Multi-Agent Dev Session[/]",
+            "[bold white]Sessione Multi-Agente[/]",
             style="cyan",
         ))
-        _console.print()
+        _console.print(
+            "[dim]  Due agenti AI collaborano: "
+            "[cyan]🤖 Orchestratore[/] pianifica e coordina, "
+            "[yellow]🔧 Worker[/] scrive il codice.[/]\n"
+        )
 
     # ── Orchestrator events ───────────────────────────────────────────────────
 
     def orch_step(self, step: int, total: int) -> None:
         _console.print(
-            f"\n[cyan bold]🤖 Orchestrator[/]  "
-            f"[dim]step {step}/{total}[/]"
+            f"\n[cyan bold]🤖 Orchestratore[/]  "
+            f"[dim]turno {step}/{total}[/]"
         )
 
     def orch_thinking(self, text: str) -> None:
@@ -79,10 +83,18 @@ class AgentUI:
         ))
 
     def orch_tool(self, name: str, preview: str) -> None:
+        _LABEL_IT = {
+            "read_file":        "legge file",
+            "list_files":       "elenca directory",
+            "write_file":       "scrive file",
+            "delegate_to_worker": "delega al Worker",
+            "mark_done":        "segna completato",
+        }
+        label = _LABEL_IT.get(name, name)
         if not VERBOSE:
             return
         _console.print(
-            f"  [cyan]🤖 ──▶[/]  [bold]{name}[/]  [dim]{preview[:72]}[/]"
+            f"  [cyan]🤖 ──▶[/]  [bold]{label}[/]  [dim]{preview[:72]}[/]"
         )
 
     def orch_result(self, summary: str) -> None:
@@ -96,20 +108,21 @@ class AgentUI:
         _console.print()
         _console.print(
             "  [cyan bold]🤖[/]  "
-            "[cyan]━━━━━━━━━━ delegate ━━━━━━━━━▶[/]  "
+            "[cyan]━━━━━ assegna compito ━━━━━▶[/]  "
             "[yellow bold]🔧[/]"
         )
-        _console.print(f"  [dim]                 task:[/] [bold]{task_id}[/]")
+        _console.print(f"  [dim]       compito:[/] [bold]{task_id}[/]")
+        _console.print(f"  [dim]  Il Worker riceve l'incarico e inizia a scrivere il codice…[/]")
 
     def delegate_result(self, task_id: str, files: list[str], ok: bool) -> None:
-        status = "[green]OK[/]" if ok else "[red]FAILED[/]"
+        status = "[green]✅ completato[/]" if ok else "[red]❌ fallito[/]"
         _console.print(
             "  [cyan bold]🤖[/]  "
-            "[cyan]◀━━━━━━━━━━ result ━━━━━━━━━━[/]  "
+            "[cyan]◀━━━━━ risultato ricevuto ━━━━━[/]  "
             "[yellow bold]🔧[/]"
         )
         _console.print(
-            f"  [dim]            status:[/] {status}  "
+            f"  [dim]       stato:[/] {status}  "
             f"[dim]{[Path(f).name for f in files]}[/]"
         )
 
@@ -118,6 +131,9 @@ class AgentUI:
     def worker_start(self, task_id: str) -> None:
         _console.print(
             f"\n{'':>32}[yellow bold]🔧 Worker[/]  [dim]{task_id}[/]"
+        )
+        _console.print(
+            f"{'':>32}[dim]Analizza il contesto e scrive il file…[/]"
         )
 
     def worker_thinking(self, text: str) -> None:
@@ -134,16 +150,21 @@ class AgentUI:
         ), justify="right")
 
     def worker_tool(self, name: str, preview: str) -> None:
+        _LABEL_IT = {
+            "write_code":       "scrive il codice",
+            "request_context":  "chiede più contesto",
+        }
+        label = _LABEL_IT.get(name, name)
         if not VERBOSE:
             return
         _console.print(
-            f"{'':>32}[yellow]🔧 ──▶[/]  [bold]{name}[/]  [dim]{preview[:60]}[/]"
+            f"{'':>32}[yellow]🔧 ──▶[/]  [bold]{label}[/]  [dim]{preview[:60]}[/]"
         )
 
     def worker_write(self, path: str, lines: int) -> None:
-        tag = "[dim][DRY RUN][/]" if DRY_RUN else "[green]✅[/]"
+        tag = "[dim][SIMULAZIONE — nessun file scritto][/]" if DRY_RUN else "[green]✅ scritto[/]"
         _console.print(
-            f"{'':>32}{tag}  [green]{path}[/]  [dim]{lines} lines[/]"
+            f"{'':>32}{tag}  [green]{path}[/]  [dim]({lines} righe)[/]"
         )
 
     # ── Session end ───────────────────────────────────────────────────────────
@@ -151,12 +172,15 @@ class AgentUI:
     def session_done(self, elapsed: float, tasks: int, files: int) -> None:
         _console.print()
         _console.print(Rule(
-            f"[bold green]✅  Done in {elapsed:.1f}s  ·  "
-            f"{tasks} task{'s' if tasks != 1 else ''}  ·  "
+            f"[bold green]✅  Completato in {elapsed:.1f}s  ·  "
+            f"{tasks} compit{'o' if tasks == 1 else 'i'}  ·  "
             f"{files} file{'s' if files != 1 else ''}[/]",
             style="green",
         ))
-        _console.print()
+        _console.print(
+            "[dim]  I file sono stati scritti nel repo. "
+            "Esegui [bold]git status[/] per vedere cosa è cambiato.[/]\n"
+        )
 
 
 _ui = AgentUI()
@@ -164,12 +188,16 @@ _ui = AgentUI()
 
 # ─── Spinner helper ───────────────────────────────────────────────────────────
 
+_SPINNER_MSG = {
+    "Orchestrator": ("cyan",  "🤖", "Orchestratore sta analizzando…"),
+    "Worker":       ("yellow","🔧", "Worker sta scrivendo il codice…"),
+}
+
 def _thinking_spinner(who: str):
     """Context manager: animated spinner while the LLM is processing."""
-    color = "cyan" if who == "Orchestrator" else "yellow"
-    icon  = "🤖"   if who == "Orchestrator" else "🔧"
+    color, icon, msg = _SPINNER_MSG[who]
     return _console.status(
-        f"[{color}]{icon}  {who} is thinking…[/]",
+        f"[{color}]{icon}  {msg}[/]",
         spinner="dots",
         spinner_style=color,
     )
@@ -556,7 +584,12 @@ def main() -> None:
 
     api_key = os.getenv("ANTHROPIC_API_KEY")
     if not api_key:
-        _console.print("[red]✗  Set ANTHROPIC_API_KEY in your environment.[/]")
+        _console.print(
+            "[red]✗  ANTHROPIC_API_KEY non trovata.[/]\n"
+            "[dim]   Copia scoreboard/.env.example → scoreboard/.env "
+            "e inserisci la tua chiave, oppure:\n"
+            "   [bold]export ANTHROPIC_API_KEY=sk-ant-...[/][/]"
+        )
         sys.exit(1)
 
     client       = anthropic.Anthropic(api_key=api_key)
