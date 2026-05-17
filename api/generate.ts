@@ -2,7 +2,9 @@ import { createClient } from "@supabase/supabase-js";
 import Anthropic from "@anthropic-ai/sdk";
 
 const SCRIPT_URL =
+  process.env.SCRIPT_URL ??
   "https://script.google.com/macros/s/AKfycbyqms0XJa93Q48ruSOnYgfm4hi4HJ3B5jLXoZkk2GFIeDFO1eE23glP1RNkZ044vPAj/exec";
+const BULLETINS_TABLE = process.env.SUPABASE_BULLETINS_TABLE ?? "bulletins";
 
 const MONTHS_IT = [
   "Gennaio","Febbraio","Marzo","Aprile","Maggio","Giugno",
@@ -231,7 +233,7 @@ export default async function handler(req: any, res: any) {
   const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
   if (!isCron) {
-    const { data: existing } = await supabase.from("bulletins").select("generated_at").eq("month", month).eq("year", year).maybeSingle();
+    const { data: existing } = await supabase.from(BULLETINS_TABLE).select("generated_at").eq("month", month).eq("year", year).maybeSingle();
     if (existing?.generated_at) {
       const ageMs = Date.now() - new Date(existing.generated_at).getTime();
       if (ageMs < 2 * 60 * 60 * 1000) {

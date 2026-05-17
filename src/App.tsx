@@ -1,10 +1,11 @@
 import { useState, useEffect, useCallback, CSSProperties, useMemo } from "react";
 
 const K = 24;
-const SCRIPT_URL = "https://script.google.com/macros/s/AKfycbyqms0XJa93Q48ruSOnYgfm4hi4HJ3B5jLXoZkk2GFIeDFO1eE23glP1RNkZ044vPAj/exec";
-const SHEET_ID = "1V4OPHS3g55m5WxOBmPKLkBPvRtCB5jSHJ-c0FvXlN8c";
+const IS_STAGING = import.meta.env.VITE_IS_STAGING === "true";
+const SCRIPT_URL = import.meta.env.VITE_SCRIPT_URL ?? "https://script.google.com/macros/s/AKfycbyqms0XJa93Q48ruSOnYgfm4hi4HJ3B5jLXoZkk2GFIeDFO1eE23glP1RNkZ044vPAj/exec";
+const SHEET_ID = import.meta.env.VITE_SHEET_ID ?? "1V4OPHS3g55m5WxOBmPKLkBPvRtCB5jSHJ-c0FvXlN8c";
 const SHEET_CSV_URL = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/export?format=csv&sheet=Matches`;
-const STORAGE_KEY = "pp_matches";
+const STORAGE_KEY = IS_STAGING ? "pp_matches_staging" : "pp_matches";
 
 const Y = "#FEFE54";
 const K0 = "#0D0D0D";
@@ -358,6 +359,11 @@ export default function App() {
 
   return (
     <div style={W}>
+      {IS_STAGING && (
+        <div role="banner" style={{ background: "#E65100", color: "#fff", textAlign: "center", fontSize: 10, fontWeight: 500, letterSpacing: "0.15em", textTransform: "uppercase", padding: "6px 20px", lineHeight: 1 }}>
+          Staging — dati di test
+        </div>
+      )}
       {flash && <Toast msg={flash} />}
 
       {/* ── HEADER — Figma: 80px ───────────────────────────────────── */}
