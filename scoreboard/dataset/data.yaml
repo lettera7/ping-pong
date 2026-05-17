@@ -1,0 +1,11 @@
+path: /Users/lucavitolo/ping-pong/scoreboard/dataset
+train: images/train
+val: images/val
+
+nc: 5
+names:
+  0: ball
+  1: table
+  2: net
+  3: paddle
+  4: player

@@ -13,3 +13,12 @@ dist/
 build/
 .venv/
 venv/
+
+# Scoreboard
+scoreboard/dataset/images/
+scoreboard/dataset/labels/
+scoreboard/models/*.pt
+scoreboard/models/pingpong/
+scoreboard/test_data/*.mp4
+yolov8n.pt
+.claude/

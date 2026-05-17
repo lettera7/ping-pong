@@ -1,38 +1,33 @@
-# ── scoreboard/requirements.txt ───────────────────────────────────────────────
-# Python 3.10+ required.
-# Install with:  pip install -r scoreboard/requirements.txt
-#
-# CPU-only PyTorch wheels are used to keep the image lean.
-# For GPU support replace the torch/torchvision lines with the appropriate
-# CUDA wheel URLs from https://pytorch.org/get-started/locally/
-# ─────────────────────────────────────────────────────────────────────────────
+# scoreboard/requirements.txt
+# Python 3.11+ required (for open-gopro compatibility)
+# Install: pip install -r scoreboard/requirements.txt
 
-# ── Deep-learning core ────────────────────────────────────────────────────────
-torch==2.3.1
-torchvision==0.18.1
+# Deep-learning
+torch>=2.1.0
+torchvision>=0.16.0
 
-# ── YOLOv8 ───────────────────────────────────────────────────────────────────
-ultralytics==8.2.48
+# YOLOv8
+ultralytics>=8.2.0
 
-# ── OCR ───────────────────────────────────────────────────────────────────────
-easyocr==1.7.1
+# Computer vision
+opencv-python-headless>=4.8.0
+numpy>=1.24.0
+Pillow>=10.0.0
+scipy>=1.11.0
 
-# ── Computer vision ───────────────────────────────────────────────────────────
-opencv-python-headless==4.10.0.84
+# GoPro streaming
+open-gopro>=0.16.0
 
-# ── HTTP client ───────────────────────────────────────────────────────────────
-httpx==0.27.0
+# HTTP client
+httpx>=0.27.0
 
-# ── Environment ───────────────────────────────────────────────────────────────
-python-dotenv==1.0.1
+# Environment
+python-dotenv>=1.0.0
 
-# ── Numerical / image utilities (transitive deps, pinned for reproducibility) ─
-numpy==1.26.4
-Pillow==10.4.0
-scipy==1.13.1
-PyYAML==6.0.1
-tqdm==4.66.4
-shapely==2.0.4
+# Utilities
+PyYAML>=6.0
+tqdm>=4.65.0
+rich>=13.0.0
 
-# ── EasyOCR extras ────────────────────────────────────────────────────────────
-python-bidi==0.4.2
+# Kalman filter (via opencv, no extra dep needed)
+# filterpy not needed — using cv2.KalmanFilter
