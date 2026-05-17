@@ -3,15 +3,19 @@
 Ping-Pong GoPro Scoreboard — runtime multi-agent score tracker.
 
 Pipeline:
-  GoPro RTSP → VisionWorker (OpenCV + YOLOv8) → OrchestratorAgent → ScoreReporter → /api/score
+  GoPro API/HTTP → VisionWorker (OpenCV + YOLOv8) → OrchestratorAgent → ScoreReporter → /api/score
 
 Multi-agent architecture (runtime):
-  OrchestratorAgent  ←→  Anthropic API (claude-sonnet-4-20250514)
+  OrchestratorAgent  ←→  Anthropic API (claude-sonnet-4-6)
        ├── VisionWorker    local inference, no API calls
        └── ScoreReporter   HTTP client → Vercel /api/score
 
 The Orchestrator uses the LLM only for edge-case validation (unusual score jumps).
 Normal ±1 increments are accepted by fast local rules; the LLM is a safety net.
+
+Stream sources (in order of preference):
+  1. RTSP (if available)
+  2. HTTP MJPEG (GoPro API)
 """
 
 from __future__ import annotations
@@ -43,6 +47,7 @@ logging.basicConfig(
 log = logging.getLogger("scoreboard")
 
 # ─── Config ───────────────────────────────────────────────────────────────────
+GOPRO_API_URL   = os.getenv("GOPRO_API_URL",       "http://10.5.5.9:8080")
 RTSP_URL        = os.getenv("GOPRO_RTSP_URL",      "rtsp://10.5.5.9:8554/live")
 SCORE_URL       = os.getenv("VERCEL_SCORE_URL",    "https://ping-pong-7.vercel.app/api/score")
 PLAYER_A        = os.getenv("PLAYER_A",            "PlayerA")
@@ -81,7 +86,7 @@ class PipelineState:
 # ─── VisionWorker ─────────────────────────────────────────────────────────────
 class VisionWorker:
     """
-    Captures frames from the GoPro RTSP stream and extracts the current score.
+    Captures frames from GoPro (RTSP or HTTP API) and extracts the current score.
 
     Detection strategy:
       1. Crop the top-centre ROI (likely scoreboard position on a GoPro mount).
@@ -93,20 +98,35 @@ class VisionWorker:
     model trained on digit bounding boxes from your specific GoPro setup.
     """
 
-    def __init__(self, rtsp_url: str, model_path: str) -> None:
+    def __init__(self, rtsp_url: str, gopro_api_url: str, model_path: str) -> None:
         self.rtsp_url = rtsp_url
+        self.gopro_api_url = gopro_api_url
         self._lock    = threading.Lock()
         self.cap: Optional[cv2.VideoCapture] = None
+        self.stream_source = "unknown"
         log.info("Loading YOLO model: %s", model_path)
         self.model = YOLO(model_path)
         self._connect()
 
     def _connect(self) -> None:
-        log.info("Connecting to RTSP: %s", self.rtsp_url)
-        self.cap = cv2.VideoCapture(self.rtsp_url)
-        if not self.cap.isOpened():
-            raise RuntimeError(f"Cannot open RTSP stream: {self.rtsp_url}")
-        log.info("RTSP stream opened.")
+        sources = [
+            (self.rtsp_url, "RTSP"),
+            (f"{self.gopro_api_url}/gopro/live/preview", "HTTP MJPEG"),
+        ]
+
+        for url, label in sources:
+            log.info("Attempting %s: %s", label, url)
+            try:
+                cap = cv2.VideoCapture(url)
+                if cap.isOpened():
+                    self.cap = cap
+                    self.stream_source = label
+                    log.info("%s stream opened successfully.", label)
+                    return
+            except Exception as e:
+                log.debug("Failed to connect via %s: %s", label, e)
+
+        raise RuntimeError("Unable to connect to any GoPro stream source")
 
     def capture_frame(self) -> Optional[np.ndarray]:
         with self._lock:
@@ -392,8 +412,8 @@ class OrchestratorAgent:
 
     def run(self) -> None:
         log.info(
-            "Orchestrator started | %s vs %s | RTSP: %s",
-            PLAYER_A, PLAYER_B, RTSP_URL,
+            "Orchestrator started | %s vs %s | Source: %s",
+            PLAYER_A, PLAYER_B, self.vision.stream_source,
         )
         try:
             while self.state.running:
@@ -417,7 +437,7 @@ def main() -> None:
         sys.exit("ANTHROPIC_API_KEY not set. Copy .env.example to .env and fill in the values.")
 
     state      = PipelineState()
-    vision     = VisionWorker(RTSP_URL, YOLO_MODEL)
+    vision     = VisionWorker(RTSP_URL, GOPRO_API_URL, YOLO_MODEL)
     reporter   = ScoreReporter(SCORE_URL, PLAYER_A, PLAYER_B)
     orchestrator = OrchestratorAgent(vision, reporter, state, api_key)
     orchestrator.run()
