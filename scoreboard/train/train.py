@@ -25,8 +25,9 @@ DATASET_DIR = Path(__file__).parent.parent / "dataset"
 MODELS_DIR = Path(__file__).parent.parent / "models"
 
 
-def train(epochs: int = 50, batch: int = 16, imgsz: int = 640, device: str = "cpu"):
-    data_yaml = DATASET_DIR / "data.yaml"
+def train(epochs: int = 50, batch: int = 16, imgsz: int = 640, device: str = "cpu",
+          data: str = None):
+    data_yaml = Path(data) if data else DATASET_DIR / "data.yaml"
     if not data_yaml.exists():
         print(f"❌ Dataset non trovato: {data_yaml}")
         print("   Esegui prima: python3 scoreboard/train/generate_synthetic.py")
@@ -81,6 +82,7 @@ if __name__ == "__main__":
     parser.add_argument("--batch", type=int, default=16)
     parser.add_argument("--imgsz", type=int, default=640)
     parser.add_argument("--device", default="cpu", help="cpu or mps")
+    parser.add_argument("--data", default=None, help="Path to data.yaml (default: synthetic)")
     args = parser.parse_args()
 
-    train(args.epochs, args.batch, args.imgsz, args.device)
+    train(args.epochs, args.batch, args.imgsz, args.device, args.data)

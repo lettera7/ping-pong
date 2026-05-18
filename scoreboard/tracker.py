@@ -78,6 +78,8 @@ class BallTracker:
         self._prev_vy: float = 0.0
         self._prev_side: str = "unknown"
         self._bounce_cooldown: int = 0
+        self._event_cooldown: int = 0
+        self._last_event: BallEvent = BallEvent.NONE
 
     def _init_kalman(self):
         # State: [x, y, vx, vy] — position and velocity
@@ -166,10 +168,10 @@ class BallTracker:
             measurement = np.array([[bx], [by]], dtype=np.float32)
             corrected = self.kf.correct(measurement)
 
-            state.x = float(corrected[0])
-            state.y = float(corrected[1])
-            state.vx = float(corrected[2])
-            state.vy = float(corrected[3])
+            state.x = float(corrected[0].item())
+            state.y = float(corrected[1].item())
+            state.vx = float(corrected[2].item())
+            state.vy = float(corrected[3].item())
             state.visible = True
             state.confidence = conf
             self._frames_lost = 0
@@ -182,25 +184,38 @@ class BallTracker:
         else:
             # No detection — use prediction only
             self._frames_lost += 1
-            state.x = float(predicted[0])
-            state.y = float(predicted[1])
-            state.vx = float(predicted[2])
-            state.vy = float(predicted[3])
+            state.x = float(predicted[0].item())
+            state.y = float(predicted[1].item())
+            state.vx = float(predicted[2].item())
+            state.vy = float(predicted[3].item())
             state.visible = False
             state.frames_since_seen = self._frames_lost
 
         # Detect side
         state.side = self._detect_side(state.x)
 
+        # Event cooldown: skip if recent event fired
+        if self._event_cooldown > 0:
+            self._event_cooldown -= 1
+            self._prev_vy = state.vy
+            self._prev_side = state.side
+            return state
+
         # Event detection (only when ball is visible or recently seen)
         if state.visible or self._frames_lost < 3:
             if self._detect_bounce(state.vy):
                 state.event = BallEvent.BOUNCE
+                self._event_cooldown = 8
             elif self._detect_net_touch(state.x, state.y):
                 state.event = BallEvent.NET_TOUCH
+                self._event_cooldown = 10
             elif self._detect_out_of_table(state.x, state.y):
-                state.event = BallEvent.OUT_OF_TABLE
+                # Only fire OUT once — needs ball to re-enter then exit again
+                if self._last_event != BallEvent.OUT_OF_TABLE:
+                    state.event = BallEvent.OUT_OF_TABLE
+                    self._event_cooldown = 30
 
+        self._last_event = state.event
         self._prev_vy = state.vy
         self._prev_side = state.side
 

@@ -17,6 +17,8 @@ venv/
 # Scoreboard
 scoreboard/dataset/images/
 scoreboard/dataset/labels/
+scoreboard/dataset_real/
+scoreboard/openttgames/
 scoreboard/models/*.pt
 scoreboard/models/pingpong/
 scoreboard/test_data/*.mp4
