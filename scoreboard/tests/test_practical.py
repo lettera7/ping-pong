@@ -25,32 +25,148 @@ from scoreboard.events import EventDetector, GameEvent
 from scoreboard.match import Match, MatchConfig
 
 
+def calibrate_table_manual(frame: np.ndarray) -> TableGeometry:
+    """
+    Open window, ask user to click 4 corners of the table in order:
+    1) TOP-LEFT  2) TOP-RIGHT  3) BOTTOM-RIGHT  4) BOTTOM-LEFT
+    Returns TableGeometry with corners trapezoid set.
+    """
+    points = []
+    H, W = frame.shape[:2]
+    win = "Calibrazione: clicca 4 angoli del tavolo (TL, TR, BR, BL)"
+
+    def on_click(event, x, y, flags, _):
+        if event == cv2.EVENT_LBUTTONDOWN and len(points) < 4:
+            points.append((x, y))
+
+    cv2.namedWindow(win, cv2.WINDOW_NORMAL)
+    cv2.resizeWindow(win, 1280, 720)
+    cv2.setMouseCallback(win, on_click)
+
+    labels = ["TL (alto-sx)", "TR (alto-dx)", "BR (basso-dx)", "BL (basso-sx)"]
+    while True:
+        vis = frame.copy()
+        for i, p in enumerate(points):
+            cv2.circle(vis, p, 8, (0, 255, 0), -1)
+            cv2.putText(vis, str(i + 1), (p[0] + 12, p[1]),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+        if len(points) >= 2:
+            pts = np.array(points + ([points[0]] if len(points) == 4 else []), np.int32)
+            cv2.polylines(vis, [pts.reshape(-1, 1, 2)], False, (0, 255, 0), 2)
+        if len(points) < 4:
+            msg = f"Clicca: {labels[len(points)]}  ({len(points)}/4)"
+            cv2.putText(vis, msg, (20, 50),
+                        cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 255, 255), 2)
+        else:
+            cv2.putText(vis, "OK premi ENTER (R=reset)",
+                        (20, 50), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 255, 0), 2)
+        cv2.imshow(win, vis)
+        k = cv2.waitKey(20) & 0xFF
+        if k == 13 and len(points) == 4:  # ENTER
+            break
+        if k == ord("r"):
+            points.clear()
+        if k == 27:  # ESC
+            cv2.destroyWindow(win)
+            return None
+
+    cv2.destroyWindow(win)
+    corners = np.array(points, dtype=np.float32)
+    x_min = float(corners[:, 0].min())
+    x_max = float(corners[:, 0].max())
+    y_min = float(corners[:, 1].min())
+    y_max = float(corners[:, 1].max())
+    top_mid_x = (corners[0, 0] + corners[1, 0]) / 2
+    bot_mid_x = (corners[3, 0] + corners[2, 0]) / 2
+    net_x = (top_mid_x + bot_mid_x) / 2
+    geom = TableGeometry(
+        x_min=x_min, x_max=x_max,
+        y_min=y_min, y_max=y_max,
+        net_x=net_x,
+        net_y_top=y_min - 20,
+        net_y_bottom=y_max,
+    )
+    geom.corners = corners  # type: ignore[attr-defined]
+    return geom
+
+
 def detect_table_blue(frame: np.ndarray):
-    """Detect blue table region via HSV thresholding. Returns TableGeometry or None."""
+    """
+    Detect blue ping-pong table via HSV + shape filtering.
+    Returns TableGeometry of best table candidate (lower-half trapezoid).
+    """
+    H, W = frame.shape[:2]
     hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
-    # Blue table range (covers Butterfly/standard blue)
-    lower = np.array([95, 80, 60])
-    upper = np.array([130, 255, 200])
+
+    # Tighter blue range for table (saturated, mid-bright); excludes dim background drapes
+    lower = np.array([95, 130, 70])
+    upper = np.array([125, 255, 220])
     mask = cv2.inRange(hsv, lower, upper)
-    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, np.ones((9, 9), np.uint8))
+
+    # Restrict search to lower 2/3 of frame (table is on floor, not on ceiling/back wall)
+    roi_mask = np.zeros_like(mask)
+    roi_mask[int(H * 0.35):, :] = 255
+    mask = cv2.bitwise_and(mask, roi_mask)
+
+    # Clean up
+    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, np.ones((5, 5), np.uint8))
+    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, np.ones((15, 15), np.uint8))
+
     contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     if not contours:
         return None
+
+    # Pick largest blob in lower half
     biggest = max(contours, key=cv2.contourArea)
     area = cv2.contourArea(biggest)
-    H, W = frame.shape[:2]
-    if area < (W * H * 0.05):  # require at least 5% of frame
+    if area < (W * H * 0.03):
         return None
-    x, y, w, h = cv2.boundingRect(biggest)
-    return TableGeometry(
-        x_min=float(x),
-        x_max=float(x + w),
-        y_min=float(y),
-        y_max=float(y + h),
-        net_x=float(x + w / 2),
-        net_y_top=float(y - 20),
-        net_y_bottom=float(y + h),
+
+    # Approximate to polygon — table seen in perspective ~ trapezoid (4 vertices)
+    epsilon = 0.02 * cv2.arcLength(biggest, True)
+    approx = cv2.approxPolyDP(biggest, epsilon, True)
+
+    # Extract corners
+    pts = approx.reshape(-1, 2)
+    if len(pts) >= 4:
+        # Pick 4 extreme corners: top-left, top-right, bottom-right, bottom-left
+        center = pts.mean(axis=0)
+        # Sort by angle from center
+        angles = np.arctan2(pts[:, 1] - center[1], pts[:, 0] - center[0])
+        sorted_pts = pts[np.argsort(angles)]
+        # We want TL, TR, BR, BL — start from top-most
+        top_two_idx = np.argsort(pts[:, 1])[:2]
+        bot_two_idx = np.argsort(pts[:, 1])[-2:]
+        tl, tr = sorted(pts[top_two_idx], key=lambda p: p[0])
+        bl, br = sorted(pts[bot_two_idx], key=lambda p: p[0])
+        corners = np.array([tl, tr, br, bl], dtype=np.float32)
+    else:
+        # Fallback to bounding rect corners
+        x, y, w, h = cv2.boundingRect(biggest)
+        corners = np.array([[x, y], [x + w, y], [x + w, y + h], [x, y + h]], dtype=np.float32)
+
+    # Build TableGeometry from trapezoid extents
+    x_min = float(corners[:, 0].min())
+    x_max = float(corners[:, 0].max())
+    y_min = float(corners[:, 1].min())
+    y_max = float(corners[:, 1].max())
+
+    # Net is at the horizontal middle of the trapezoid, projected at mid-Y
+    mid_y = (y_min + y_max) / 2
+    # Net x = average of midpoints of top edge and bottom edge
+    top_mid_x = (corners[0, 0] + corners[1, 0]) / 2  # TL + TR
+    bot_mid_x = (corners[3, 0] + corners[2, 0]) / 2  # BL + BR
+    net_x = (top_mid_x + bot_mid_x) / 2
+
+    geom = TableGeometry(
+        x_min=x_min, x_max=x_max,
+        y_min=y_min, y_max=y_max,
+        net_x=net_x,
+        net_y_top=y_min - 20,
+        net_y_bottom=y_max,
     )
+    geom.corners = corners  # type: ignore[attr-defined]
+    return geom
 
 
 VIDEO_PATH = Path(__file__).parent.parent / "test_data" / "rally_test.mp4"
@@ -139,7 +255,7 @@ def generate_rally_video(output: Path, n_frames: int = 200, fps: int = 30):
 
 
 def run_pipeline(video_path: Path, model_path: Path, show: bool = False, max_frames: int = 0,
-                 start_frame: int = 0):
+                 start_frame: int = 0, manual_geom: TableGeometry = None):
     """Run full pipeline on a video file with verbose output."""
     print(f"\n🎬 Caricamento modello: {model_path}")
     model = YOLO(str(model_path))
@@ -157,7 +273,11 @@ def run_pipeline(video_path: Path, model_path: Path, show: bool = False, max_fra
     tracker = BallTracker()
     detector = EventDetector(server="A")
     match = Match(MatchConfig(best_of=3, player_a_name="Mario", player_b_name="Luigi"))
-    table_geom = None  # detected on first valid frame
+    table_geom = manual_geom  # use manual calibration if provided
+    if table_geom:
+        tracker.update_table(table_geom)
+        print(f"📐 Geometria tavolo: x[{table_geom.x_min:.0f}-{table_geom.x_max:.0f}] "
+              f"y[{table_geom.y_min:.0f}-{table_geom.y_max:.0f}] net_x={table_geom.net_x:.0f}")
 
     detector.start_serve()
 
@@ -180,8 +300,8 @@ def run_pipeline(video_path: Path, model_path: Path, show: bool = False, max_fra
 
         t0 = time.time()
 
-        # Detect table once (or refresh every 200 frames)
-        if table_geom is None or frame_n % 200 == 0:
+        # Detect table once (skip if manually calibrated)
+        if manual_geom is None and (table_geom is None or frame_n % 200 == 0):
             detected = detect_table_blue(frame)
             if detected:
                 table_geom = detected
@@ -284,14 +404,23 @@ def run_pipeline(video_path: Path, model_path: Path, show: bool = False, max_fra
                 cv2.rectangle(vis, (int(net_bbox[0]), int(net_bbox[1])),
                               (int(net_bbox[2]), int(net_bbox[3])), (255, 0, 255), 2)
             if table_geom:
-                cv2.rectangle(vis,
-                              (int(table_geom.x_min), int(table_geom.y_min)),
-                              (int(table_geom.x_max), int(table_geom.y_max)),
-                              (0, 255, 0), 2)
-                cv2.line(vis,
-                         (int(table_geom.net_x), int(table_geom.y_min)),
-                         (int(table_geom.net_x), int(table_geom.y_max)),
-                         (255, 0, 255), 2)
+                corners = getattr(table_geom, "corners", None)
+                if corners is not None:
+                    pts = corners.astype(int).reshape(-1, 1, 2)
+                    cv2.polylines(vis, [pts], isClosed=True, color=(0, 255, 0), thickness=2)
+                    # Draw net line between midpoint of top edge and midpoint of bottom edge
+                    top_mid = ((corners[0] + corners[1]) / 2).astype(int)
+                    bot_mid = ((corners[3] + corners[2]) / 2).astype(int)
+                    cv2.line(vis, tuple(top_mid), tuple(bot_mid), (255, 0, 255), 2)
+                else:
+                    cv2.rectangle(vis,
+                                  (int(table_geom.x_min), int(table_geom.y_min)),
+                                  (int(table_geom.x_max), int(table_geom.y_max)),
+                                  (0, 255, 0), 2)
+                    cv2.line(vis,
+                             (int(table_geom.net_x), int(table_geom.y_min)),
+                             (int(table_geom.net_x), int(table_geom.y_max)),
+                             (255, 0, 255), 2)
             cv2.imshow("Pipeline test", vis)
             if cv2.waitKey(1) & 0xFF == ord("q"):
                 break
@@ -325,6 +454,8 @@ if __name__ == "__main__":
     parser.add_argument("--video", type=str, default=None, help="Path to custom video file")
     parser.add_argument("--max-frames", type=int, default=0, help="Stop after N frames (0=all)")
     parser.add_argument("--start-frame", type=int, default=0, help="Skip first N frames")
+    parser.add_argument("--calibrate", action="store_true",
+                        help="Manual table calibration by clicking 4 corners")
     args = parser.parse_args()
 
     if args.video:
@@ -345,5 +476,22 @@ if __name__ == "__main__":
         print(f"❌ Modello non trovato: {MODEL_PATH}")
         sys.exit(1)
 
+    manual_geom = None
+    if args.calibrate:
+        cap_tmp = cv2.VideoCapture(str(video))
+        if args.start_frame > 0:
+            cap_tmp.set(cv2.CAP_PROP_POS_FRAMES, args.start_frame)
+        ok, sample = cap_tmp.read()
+        cap_tmp.release()
+        if not ok:
+            print("❌ Impossibile leggere frame per calibrazione")
+            sys.exit(1)
+        print("\n🎯 Calibrazione manuale tavolo — clicca 4 angoli in ordine TL, TR, BR, BL")
+        manual_geom = calibrate_table_manual(sample)
+        if manual_geom is None:
+            print("❌ Calibrazione annullata")
+            sys.exit(1)
+        print("✅ Tavolo calibrato")
+
     run_pipeline(video, MODEL_PATH, show=args.show, max_frames=args.max_frames,
-                 start_frame=args.start_frame)
+                 start_frame=args.start_frame, manual_geom=manual_geom)
