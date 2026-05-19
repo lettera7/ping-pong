@@ -28,8 +28,9 @@ import numpy as np
 BASE_URL = "https://lab.osai.ai/datasets/openttgames/data"
 DATA_DIR = Path(__file__).parent.parent / "openttgames"
 DATASET_DIR = Path(__file__).parent.parent / "dataset_real"
-BALL_BBOX_SIZE = 14  # pixels (approx ping-pong ball in 1920x1080)
-FRAME_SKIP = 4  # take every Nth frame to reduce dataset size
+BALL_BBOX_SIZE = 22  # pixels at 1920x1080 native resolution
+FRAME_SKIP = 1  # take every Nth frame
+KEEP_NATIVE_RES = True  # extract full 1920x1080 (no resize) for better small-ball detection
 
 # All test videos with sizes (MB)
 TEST_VIDEOS = {
@@ -146,29 +147,34 @@ def convert_to_yolo(
             by = coord.get("y", -1)
 
             if bx >= 0 and by >= 0:
-                # Resize to 640x640 for YOLO
-                scale = 640 / max(W, H)
-                new_w = int(W * scale)
-                new_h = int(H * scale)
-                frame_resized = cv2.resize(frame, (new_w, new_h))
+                if KEEP_NATIVE_RES:
+                    # Keep native resolution — YOLO handles resize/letterbox during training
+                    out_img = frame
+                    out_w, out_h = W, H
+                    bx_out, by_out = bx, by
+                    bw = BALL_BBOX_SIZE
+                    bh = BALL_BBOX_SIZE
+                else:
+                    # Resize to 640x640
+                    scale = 640 / max(W, H)
+                    new_w = int(W * scale)
+                    new_h = int(H * scale)
+                    frame_resized = cv2.resize(frame, (new_w, new_h))
+                    canvas = np.zeros((640, 640, 3), dtype=np.uint8)
+                    pad_x = (640 - new_w) // 2
+                    pad_y = (640 - new_h) // 2
+                    canvas[pad_y:pad_y + new_h, pad_x:pad_x + new_w] = frame_resized
+                    out_img = canvas
+                    out_w, out_h = 640, 640
+                    bx_out = bx * scale + pad_x
+                    by_out = by * scale + pad_y
+                    bw = BALL_BBOX_SIZE * scale
+                    bh = BALL_BBOX_SIZE * scale
 
-                # Pad to square 640x640
-                canvas = np.zeros((640, 640, 3), dtype=np.uint8)
-                pad_x = (640 - new_w) // 2
-                pad_y = (640 - new_h) // 2
-                canvas[pad_y:pad_y + new_h, pad_x:pad_x + new_w] = frame_resized
-
-                # Transform ball coords
-                bx_new = bx * scale + pad_x
-                by_new = by * scale + pad_y
-                bw = BALL_BBOX_SIZE * scale
-                bh = BALL_BBOX_SIZE * scale
-
-                # Normalize for YOLO
-                x_center = bx_new / 640
-                y_center = by_new / 640
-                w_norm = bw / 640
-                h_norm = bh / 640
+                x_center = bx_out / out_w
+                y_center = by_out / out_h
+                w_norm = bw / out_w
+                h_norm = bh / out_h
 
                 # Train/val split
                 is_train = (saved % 100) < int(train_ratio * 100)
@@ -176,7 +182,7 @@ def convert_to_yolo(
                 lbl_dir = labels_train if is_train else labels_val
 
                 stem = f"{video_name}_{frame_idx:06d}"
-                cv2.imwrite(str(img_dir / f"{stem}.jpg"), canvas, [cv2.IMWRITE_JPEG_QUALITY, 85])
+                cv2.imwrite(str(img_dir / f"{stem}.jpg"), out_img, [cv2.IMWRITE_JPEG_QUALITY, 90])
                 with open(lbl_dir / f"{stem}.txt", "w") as f:
                     f.write(f"0 {x_center:.6f} {y_center:.6f} {w_norm:.6f} {h_norm:.6f}\n")
 

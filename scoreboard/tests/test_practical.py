@@ -25,6 +25,34 @@ from scoreboard.events import EventDetector, GameEvent
 from scoreboard.match import Match, MatchConfig
 
 
+def detect_table_blue(frame: np.ndarray):
+    """Detect blue table region via HSV thresholding. Returns TableGeometry or None."""
+    hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+    # Blue table range (covers Butterfly/standard blue)
+    lower = np.array([95, 80, 60])
+    upper = np.array([130, 255, 200])
+    mask = cv2.inRange(hsv, lower, upper)
+    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, np.ones((9, 9), np.uint8))
+    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    if not contours:
+        return None
+    biggest = max(contours, key=cv2.contourArea)
+    area = cv2.contourArea(biggest)
+    H, W = frame.shape[:2]
+    if area < (W * H * 0.05):  # require at least 5% of frame
+        return None
+    x, y, w, h = cv2.boundingRect(biggest)
+    return TableGeometry(
+        x_min=float(x),
+        x_max=float(x + w),
+        y_min=float(y),
+        y_max=float(y + h),
+        net_x=float(x + w / 2),
+        net_y_top=float(y - 20),
+        net_y_bottom=float(y + h),
+    )
+
+
 VIDEO_PATH = Path(__file__).parent.parent / "test_data" / "rally_test.mp4"
 MODEL_PATH = Path(__file__).parent.parent / "models" / "best.pt"
 
@@ -110,7 +138,8 @@ def generate_rally_video(output: Path, n_frames: int = 200, fps: int = 30):
     print(f"✅ Video generato: {output} ({n_frames} frame @ {fps}fps)")
 
 
-def run_pipeline(video_path: Path, model_path: Path, show: bool = False):
+def run_pipeline(video_path: Path, model_path: Path, show: bool = False, max_frames: int = 0,
+                 start_frame: int = 0):
     """Run full pipeline on a video file with verbose output."""
     print(f"\n🎬 Caricamento modello: {model_path}")
     model = YOLO(str(model_path))
@@ -121,9 +150,14 @@ def run_pipeline(video_path: Path, model_path: Path, show: bool = False):
         print(f"❌ Cannot open {video_path}")
         return
 
+    if start_frame > 0:
+        cap.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
+        print(f"⏩ Skip a frame {start_frame}")
+
     tracker = BallTracker()
     detector = EventDetector(server="A")
     match = Match(MatchConfig(best_of=3, player_a_name="Mario", player_b_name="Luigi"))
+    table_geom = None  # detected on first valid frame
 
     detector.start_serve()
 
@@ -141,13 +175,22 @@ def run_pipeline(video_path: Path, model_path: Path, show: bool = False):
         if not ok:
             break
         frame_n += 1
+        if max_frames and frame_n > max_frames:
+            break
 
         t0 = time.time()
 
-        # YOLO inference
-        results = model.predict(frame, conf=0.25, verbose=False, imgsz=640)
+        # Detect table once (or refresh every 200 frames)
+        if table_geom is None or frame_n % 200 == 0:
+            detected = detect_table_blue(frame)
+            if detected:
+                table_geom = detected
+                tracker.update_table(table_geom)
 
-        ball_dets = []
+        # YOLO inference (higher conf to filter false positives, imgsz=1280 matches training)
+        results = model.predict(frame, conf=0.6, verbose=False, imgsz=1280)
+
+        ball_dets_raw = []
         table_bbox = None
         net_bbox = None
         for r in results:
@@ -156,13 +199,24 @@ def run_pipeline(video_path: Path, model_path: Path, show: bool = False):
                 conf = float(box.conf[0].item())
                 x1, y1, x2, y2 = box.xyxy[0].tolist()
                 cx, cy = (x1 + x2) / 2, (y1 + y2) / 2
+                w, h = x2 - x1, y2 - y1
 
                 if cls_id == 0:  # ball
-                    ball_dets.append((cx, cy, conf))
-                elif cls_id == 1:  # table
+                    ball_dets_raw.append((cx, cy, conf, w, h))
+                elif cls_id == 1:
                     table_bbox = (x1, y1, x2, y2)
-                elif cls_id == 2:  # net
+                elif cls_id == 2:
                     net_bbox = (x1, y1, x2, y2)
+
+        # Filter: realistic ball size (5-30 px) and not static "ghost" detections
+        # Track moving detections only — keep top-confidence single ball
+        ball_dets = []
+        if ball_dets_raw:
+            # Filter by size
+            ball_dets_raw = [d for d in ball_dets_raw if 3 <= d[3] <= 40 and 3 <= d[4] <= 40]
+            if ball_dets_raw:
+                best = max(ball_dets_raw, key=lambda d: d[2])
+                ball_dets = [(best[0], best[1], best[2])]
 
         if ball_dets:
             detections_count += 1
@@ -207,8 +261,8 @@ def run_pipeline(video_path: Path, model_path: Path, show: bool = False):
             name = "Mario" if event_result.player_scored == "A" else "Luigi"
             print(f"  🎯 PUNTO a {name}! Score: {r['score'][0]}-{r['score'][1]} ({event_result.detail})")
             detector.set_server(match.current_server)
-            # Skip 30 frames before allowing next point (~1s @ 30fps)
-            for _ in range(30):
+            # Skip 240 frames before allowing next point (~2s @ 120fps)
+            for _ in range(240):
                 ok2, _ = cap.read()
                 if not ok2:
                     break
@@ -229,6 +283,15 @@ def run_pipeline(video_path: Path, model_path: Path, show: bool = False):
             if net_bbox:
                 cv2.rectangle(vis, (int(net_bbox[0]), int(net_bbox[1])),
                               (int(net_bbox[2]), int(net_bbox[3])), (255, 0, 255), 2)
+            if table_geom:
+                cv2.rectangle(vis,
+                              (int(table_geom.x_min), int(table_geom.y_min)),
+                              (int(table_geom.x_max), int(table_geom.y_max)),
+                              (0, 255, 0), 2)
+                cv2.line(vis,
+                         (int(table_geom.net_x), int(table_geom.y_min)),
+                         (int(table_geom.net_x), int(table_geom.y_max)),
+                         (255, 0, 255), 2)
             cv2.imshow("Pipeline test", vis)
             if cv2.waitKey(1) & 0xFF == ord("q"):
                 break
@@ -258,17 +321,29 @@ def run_pipeline(video_path: Path, model_path: Path, show: bool = False):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--show", action="store_true", help="Display frames with detections")
-    parser.add_argument("--regen", action="store_true", help="Force regenerate video")
+    parser.add_argument("--regen", action="store_true", help="Force regenerate synthetic video")
+    parser.add_argument("--video", type=str, default=None, help="Path to custom video file")
+    parser.add_argument("--max-frames", type=int, default=0, help="Stop after N frames (0=all)")
+    parser.add_argument("--start-frame", type=int, default=0, help="Skip first N frames")
     args = parser.parse_args()
 
-    if not VIDEO_PATH.exists() or args.regen:
-        VIDEO_PATH.parent.mkdir(parents=True, exist_ok=True)
-        generate_rally_video(VIDEO_PATH)
+    if args.video:
+        video = Path(args.video)
+        if not video.exists():
+            print(f"❌ Video non trovato: {video}")
+            sys.exit(1)
+        print(f"📹 Video custom: {video}")
     else:
-        print(f"📹 Video esistente: {VIDEO_PATH}")
+        if not VIDEO_PATH.exists() or args.regen:
+            VIDEO_PATH.parent.mkdir(parents=True, exist_ok=True)
+            generate_rally_video(VIDEO_PATH)
+        else:
+            print(f"📹 Video esistente: {VIDEO_PATH}")
+        video = VIDEO_PATH
 
     if not MODEL_PATH.exists():
         print(f"❌ Modello non trovato: {MODEL_PATH}")
         sys.exit(1)
 
-    run_pipeline(VIDEO_PATH, MODEL_PATH, show=args.show)
+    run_pipeline(video, MODEL_PATH, show=args.show, max_frames=args.max_frames,
+                 start_frame=args.start_frame)

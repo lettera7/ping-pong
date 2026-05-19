@@ -194,6 +194,18 @@ class BallTracker:
         # Detect side
         state.side = self._detect_side(state.x)
 
+        # Reset tracker if ball lost too long
+        if self._frames_lost > self._max_lost:
+            self._init_kalman()
+            self._history.clear()
+            self._last_event = BallEvent.NONE
+            self._event_cooldown = 0
+            self._prev_vy = 0.0
+            # Mark state as invalid — no events should fire
+            state.visible = False
+            state.event = BallEvent.NONE
+            return state
+
         # Event cooldown: skip if recent event fired
         if self._event_cooldown > 0:
             self._event_cooldown -= 1
@@ -201,8 +213,9 @@ class BallTracker:
             self._prev_side = state.side
             return state
 
-        # Event detection (only when ball is visible or recently seen)
-        if state.visible or self._frames_lost < 3:
+        # Event detection: ONLY on visible detections, not Kalman predictions
+        # This prevents fake OUT events from extrapolated coordinates
+        if state.visible:
             if self._detect_bounce(state.vy):
                 state.event = BallEvent.BOUNCE
                 self._event_cooldown = 8
@@ -210,10 +223,9 @@ class BallTracker:
                 state.event = BallEvent.NET_TOUCH
                 self._event_cooldown = 10
             elif self._detect_out_of_table(state.x, state.y):
-                # Only fire OUT once — needs ball to re-enter then exit again
                 if self._last_event != BallEvent.OUT_OF_TABLE:
                     state.event = BallEvent.OUT_OF_TABLE
-                    self._event_cooldown = 30
+                    self._event_cooldown = 120  # 1s @ 120fps
 
         self._last_event = state.event
         self._prev_vy = state.vy
