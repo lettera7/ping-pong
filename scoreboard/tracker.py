@@ -7,6 +7,7 @@ Tracks ping-pong ball position, velocity, and detects events:
 - Out of table (ball exits table bounds)
 """
 
+from collections import deque
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Optional, List, Tuple
@@ -80,6 +81,11 @@ class BallTracker:
         self._bounce_cooldown: int = 0
         self._event_cooldown: int = 0
         self._last_event: BallEvent = BallEvent.NONE
+
+        # Rally validity tracking: only consider rally "active" if recent fast motion
+        self._motion_history: deque = deque(maxlen=120)  # last 1s @ 120fps
+        self._min_motion_frames: int = 20  # need 20 frames of fast motion in last 1s
+        self._motion_speed_thresh: float = 15.0  # px/frame
 
     def _init_kalman(self):
         # State: [x, y, vx, vy] — position and velocity
@@ -213,6 +219,12 @@ class BallTracker:
             self._prev_side = state.side
             return state
 
+        # Track motion for rally validity
+        speed = (state.vx ** 2 + state.vy ** 2) ** 0.5
+        is_fast = state.visible and speed > self._motion_speed_thresh
+        self._motion_history.append(1 if is_fast else 0)
+        rally_active = sum(self._motion_history) >= self._min_motion_frames
+
         # Event detection: ONLY on visible detections, not Kalman predictions
         # This prevents fake OUT events from extrapolated coordinates
         if state.visible:
@@ -223,9 +235,11 @@ class BallTracker:
                 state.event = BallEvent.NET_TOUCH
                 self._event_cooldown = 10
             elif self._detect_out_of_table(state.x, state.y):
-                if self._last_event != BallEvent.OUT_OF_TABLE:
+                # Only count OUT if rally was truly active (real exchange happening)
+                if self._last_event != BallEvent.OUT_OF_TABLE and rally_active:
                     state.event = BallEvent.OUT_OF_TABLE
                     self._event_cooldown = 120  # 1s @ 120fps
+                    self._motion_history.clear()  # rally ended
 
         self._last_event = state.event
         self._prev_vy = state.vy
