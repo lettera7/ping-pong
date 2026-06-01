@@ -433,13 +433,12 @@ export default function App() {
     const cm = now.getMonth() + 1;
     const cy = now.getFullYear();
 
-    // Baseline from last completed month
-    const baseElo: Record<string, number> = {};
+    // All players start from 1000 every month
+    const knownPlayers = new Set<string>();
     if (monthlyHistory.length > 0) {
-      monthlyHistory[0].standings.forEach(([name, rating]) => {
-        if (rating !== null) baseElo[name as string] = rating as number;
-      });
+      monthlyHistory[0].standings.forEach(([name]) => knownPlayers.add(name as string));
     }
+    Object.keys(state?.players ?? {}).forEach(p => knownPlayers.add(p));
 
     // Current month's raw matches
     const monthRaw = (state?.matches ?? []).filter(m => {
@@ -447,8 +446,9 @@ export default function App() {
       return d.getMonth() + 1 === cm && d.getFullYear() === cy;
     });
 
-    // Replay current month from base
-    const ratings: Record<string, number> = { ...baseElo };
+    // Replay current month from 1000 baseline
+    const ratings: Record<string, number> = {};
+    knownPlayers.forEach(p => { ratings[p] = 1000; });
     const wins: Record<string, number> = {};
     const losses: Record<string, number> = {};
     const matchCounts: Record<string, number> = {};
@@ -474,7 +474,7 @@ export default function App() {
       .sort((a, b) => b[1] - a[1])
       .map(([name, rating]) => ({
         name, rating: Math.round(rating),
-        delta: Math.round(rating - (baseElo[name] ?? 1000)),
+        delta: Math.round(rating - 1000),
         wins: wins[name] || 0,
         losses: losses[name] || 0,
         matches: matchCounts[name] || 0,
@@ -581,7 +581,7 @@ export default function App() {
             <>
               {!currentMonthView.hasMatches && (
                 <div style={{ padding: "20px", background: LG, borderBottom: `1.5px solid ${K0}`, fontSize: 11, color: GR, letterSpacing: "0.05em", textTransform: "uppercase" }}>
-                  Nessuna partita ancora — classifica da {monthlyHistory[0]?.month ?? "mese precedente"}
+                  Nessuna partita ancora — tutti a 1000
                 </div>
               )}
               {currentMonthView.standings.length > 0 && (() => {
@@ -645,22 +645,34 @@ export default function App() {
 
                 {/* Monthly sections */}
                 {monthlyHistory.map(month => (
-                  <div key={month.month}>
-                    {/* Section header — Figma: 44px gray, winner badge right half yellow */}
+                  <div key={month.month} style={{ borderBottom: `1.5px solid ${K0}` }}>
+                    {/* Section header */}
                     <div style={{ height: 44, background: LG, display: "flex", alignItems: "center", borderBottom: `1.5px solid ${K0}` }}>
                       <div style={{ flex: 1, paddingLeft: 20, fontSize: 12, fontWeight: 500, textTransform: "uppercase", letterSpacing: "0.05em" }}>{month.month}</div>
                       {month.winner && (
-                        <div style={{ width: "50%", height: 44, background: Y, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, fontWeight: 500, textTransform: "uppercase", color: K0 }}>
-                          <span aria-hidden="true">🏆 </span>{month.winner}{month.winnerNote ? " " + month.winnerNote : ""}
+                        <div style={{ paddingLeft: 16, paddingRight: 16, height: 44, background: Y, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, fontWeight: 500, textTransform: "uppercase", color: K0, gap: 6 }}>
+                          <span aria-hidden="true">🏆</span>{month.winner}{month.winnerNote ? " " + month.winnerNote : ""}
                         </div>
                       )}
                     </div>
 
-                    {/* Player rows — Figma: 28px each, 10px rank, 16px name, 16px rating right */}
-                    {month.standings.map(([name, rating], i) => (
-                      <div key={name as string} style={{ height: 28, display: "flex", alignItems: "center", paddingLeft: 20, paddingRight: 20, borderBottom: `1.5px solid #ededed` }}>
-                        <span style={{ fontSize: 10, fontWeight: i === 0 ? 500 : 300, color: i === 0 ? K0 : GR_LIGHT, width: 24, flexShrink: 0 }}>{i + 1}°</span>
-                        <span style={{ flex: 1, fontSize: 16, fontWeight: i === 0 ? 500 : 300, color: K0 }}>{name as string}</span>
+                    {/* 1st place hero row */}
+                    {month.standings[0] && (() => {
+                      const [name, rating] = month.standings[0];
+                      return (
+                        <div style={{ height: 64, background: "#fff", display: "flex", alignItems: "center", paddingLeft: 20, paddingRight: 20, borderBottom: `1.5px solid #e8e8e8` }}>
+                          <span style={{ fontSize: 12, fontWeight: 500, width: 28, flexShrink: 0, color: K0 }}>1°</span>
+                          <span style={{ flex: 1, fontSize: 24, fontWeight: 500, letterSpacing: "-0.02em", color: K0 }}>{name as string}</span>
+                          <span style={{ fontSize: 24, fontWeight: 500, color: K0 }}>{rating ?? "–"}</span>
+                        </div>
+                      );
+                    })()}
+
+                    {/* Remaining player rows */}
+                    {month.standings.slice(1).map(([name, rating], i) => (
+                      <div key={name as string} style={{ height: 44, display: "flex", alignItems: "center", paddingLeft: 20, paddingRight: 20, borderBottom: `1.5px solid #ededed` }}>
+                        <span style={{ fontSize: 10, fontWeight: 300, color: GR_LIGHT, width: 28, flexShrink: 0 }}>{i + 2}°</span>
+                        <span style={{ flex: 1, fontSize: 16, fontWeight: 400, color: K0 }}>{name as string}</span>
                         <span style={{ fontSize: 16, fontWeight: 500, color: K0 }}>{rating ?? "–"}</span>
                       </div>
                     ))}
