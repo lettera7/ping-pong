@@ -84,36 +84,31 @@ function computeMonthlyHistory(matches: Match[], now: Date): MonthlyRecord[] {
     if (key === currentKey) continue;
     const [yearStr, monthStr] = key.split("-");
     const year = parseInt(yearStr), month = parseInt(monthStr);
-    const endOfMonth = new Date(year, month, 0, 23, 59, 59);
 
     const monthMatches = withDates.filter(m => m._d.getMonth() + 1 === month && m._d.getFullYear() === year);
     if (monthMatches.length === 0) continue;
 
-    const playersInMonth = new Set<string>();
-    monthMatches.forEach(m => { playersInMonth.add(m.playerA); playersInMonth.add(m.playerB); });
-
+    // Replay this month from 1000 — same logic as currentMonthView
     const ratings: Record<string, number> = {};
-    for (const player of playersInMonth) {
-      const last = [...withDates]
-        .filter(m => m._d <= endOfMonth && (m.playerA === player || m.playerB === player))
-        .pop();
-      if (last) ratings[player] = last.playerA === player ? last.newA : last.newB;
-    }
+    monthMatches.forEach(m => {
+      if (m.scoreA === m.scoreB) return;
+      if (!(m.playerA in ratings)) ratings[m.playerA] = 1000;
+      if (!(m.playerB in ratings)) ratings[m.playerB] = 1000;
+      const rA = ratings[m.playerA], rB = ratings[m.playerB];
+      const eA = 1 / (1 + Math.pow(10, (rB - rA) / 400));
+      const dA = Math.round(K * ((m.scoreA > m.scoreB ? 1 : 0) - eA));
+      ratings[m.playerA] = rA + dA;
+      ratings[m.playerB] = rB - dA;
+    });
 
-    const standings: [string, number][] = [...playersInMonth]
-      .filter(p => ratings[p] !== undefined)
-      .sort((a, b) => (ratings[b] || 0) - (ratings[a] || 0))
-      .map(name => [name, Math.round(ratings[name])]);
+    const standings: [string, number][] = Object.entries(ratings)
+      .sort((a, b) => b[1] - a[1])
+      .map(([name, rating]) => [name, Math.round(rating)]);
 
     if (standings.length === 0) continue;
 
-    const winCounts: Record<string, number> = {};
-    monthMatches.forEach(m => {
-      const w = m.scoreA > m.scoreB ? m.playerA : m.playerB;
-      winCounts[w] = (winCounts[w] || 0) + 1;
-    });
-    const winner = Object.entries(winCounts)
-      .sort((a, b) => b[1] - a[1] || (ratings[b[0]] || 0) - (ratings[a[0]] || 0))[0]?.[0] || "";
+    // Winner = 1st place in standings
+    const winner = standings[0][0];
 
     computed.push({ month: `${MONTHS_IT[month - 1]} ${year}`, winner, standings });
   }
