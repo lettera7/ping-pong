@@ -405,6 +405,60 @@ export default function App() {
 
   const monthlyHistory = useMemo(() => computeMonthlyHistory(state?.matches ?? [], now), [state?.matches]);
 
+  const currentMonthView = useMemo(() => {
+    const cm = now.getMonth() + 1;
+    const cy = now.getFullYear();
+
+    // Baseline from last completed month
+    const baseElo: Record<string, number> = {};
+    if (monthlyHistory.length > 0) {
+      monthlyHistory[0].standings.forEach(([name, rating]) => {
+        if (rating !== null) baseElo[name as string] = rating as number;
+      });
+    }
+
+    // Current month's raw matches
+    const monthRaw = (state?.matches ?? []).filter(m => {
+      const d = parseDateIT(m.date);
+      return d.getMonth() + 1 === cm && d.getFullYear() === cy;
+    });
+
+    // Replay current month from base
+    const ratings: Record<string, number> = { ...baseElo };
+    const wins: Record<string, number> = {};
+    const losses: Record<string, number> = {};
+    const matchCounts: Record<string, number> = {};
+
+    monthRaw.forEach(m => {
+      if (!(m.playerA in ratings)) ratings[m.playerA] = 1000;
+      if (!(m.playerB in ratings)) ratings[m.playerB] = 1000;
+      const rA = ratings[m.playerA], rB = ratings[m.playerB];
+      const eA = 1 / (1 + Math.pow(10, (rB - rA) / 400));
+      const dA = Math.round(K * ((m.scoreA > m.scoreB ? 1 : 0) - eA));
+      ratings[m.playerA] = rA + dA;
+      ratings[m.playerB] = rB - dA;
+      const wA = m.scoreA > m.scoreB;
+      wins[m.playerA] = (wins[m.playerA] || 0) + (wA ? 1 : 0);
+      losses[m.playerA] = (losses[m.playerA] || 0) + (wA ? 0 : 1);
+      matchCounts[m.playerA] = (matchCounts[m.playerA] || 0) + 1;
+      wins[m.playerB] = (wins[m.playerB] || 0) + (wA ? 0 : 1);
+      losses[m.playerB] = (losses[m.playerB] || 0) + (wA ? 1 : 0);
+      matchCounts[m.playerB] = (matchCounts[m.playerB] || 0) + 1;
+    });
+
+    const sorted = Object.entries(ratings)
+      .sort((a, b) => b[1] - a[1])
+      .map(([name, rating]) => ({
+        name, rating: Math.round(rating),
+        delta: Math.round(rating - (baseElo[name] ?? 1000)),
+        wins: wins[name] || 0,
+        losses: losses[name] || 0,
+        matches: matchCounts[name] || 0,
+      }));
+
+    return { standings: sorted, hasMatches: monthRaw.length > 0, matchCount: monthRaw.length };
+  }, [state?.matches, monthlyHistory]);
+
   const storAvailMonths = useMemo(() => {
     if (!state) return [];
     return [...new Set(state.matches.map(m => {
@@ -501,31 +555,40 @@ export default function App() {
 
           {standingsTab === "current" && (
             <>
-              {/* #1 hero — Figma: 94px yellow */}
-              {first && (
-                <section aria-label="Primo classificato" style={{ background: Y, height: 94, position: "relative", borderBottom: `1.5px solid ${K0}` }}>
-                  <div style={{ position: "absolute", left: 20, top: 40, fontSize: 16, fontWeight: 500, lineHeight: 1 }}>1°</div>
-                  <h1 style={{ position: "absolute", left: 48, top: 20, fontSize: 36, fontWeight: 500, letterSpacing: "-0.02em", lineHeight: 1, fontFamily: "inherit", margin: 0 }}>{first[0]}</h1>
-                  <div style={{ position: "absolute", right: 20, top: 28, fontSize: 28, fontWeight: 500, lineHeight: 1 }} aria-label={`ELO ${first[1].rating}`}>{first[1].rating}</div>
-                  <div style={{ position: "absolute", left: 48, top: 62, fontSize: 8, fontWeight: 300, letterSpacing: "0.05em", lineHeight: 1 }} aria-label={`${first[1].matches} partite, ${first[1].wins} vittorie, ${first[1].losses} sconfitte`}>
-                    {first[1].matches}P · {first[1].wins}V · {first[1].losses}S · {first[1].matches ? Math.round(first[1].wins / first[1].matches * 100) : 0}%
-                  </div>
-                </section>
+              {!currentMonthView.hasMatches && (
+                <div style={{ padding: "20px", background: LG, borderBottom: `1.5px solid ${K0}`, fontSize: 11, color: GR, letterSpacing: "0.05em", textTransform: "uppercase" }}>
+                  Nessuna partita ancora — classifica da {monthlyHistory[0]?.month ?? "mese precedente"}
+                </div>
               )}
-
-              {/* Ranks 2°+ — Figma: 56px rows */}
-              <ol style={{ listStyle: "none", padding: 0, margin: 0 }} aria-label="Classifica">
-                {rest.map(([name, p], i) => (
-                  <li key={name} style={{ height: 56, position: "relative", borderBottom: `1.5px solid #e8e8e8` }}>
-                    <span style={{ position: "absolute", left: 20, top: 19, fontSize: 12, fontWeight: 500, lineHeight: 1 }}>{i + 2}°</span>
-                    <span style={{ position: "absolute", left: 48, top: 14, fontSize: 18, fontWeight: 500, letterSpacing: "-0.01em", lineHeight: 1 }}>{name}</span>
-                    <span style={{ position: "absolute", left: 48, top: 36, fontSize: 8, fontWeight: 300, color: GR_LIGHT, lineHeight: 1 }} aria-label={`${p.matches} partite`}>
-                      {p.matches}P · {p.wins}V · {p.losses}S · {p.matches ? Math.round(p.wins / p.matches * 100) : 0}%
-                    </span>
-                    <span style={{ position: "absolute", right: 20, top: 18, fontSize: 22, fontWeight: 500, lineHeight: 1 }} aria-label={`ELO ${p.rating}`}>{p.rating}</span>
-                  </li>
-                ))}
-              </ol>
+              {currentMonthView.standings.length > 0 && (() => {
+                const [cm0, ...cmRest] = currentMonthView.standings;
+                return (
+                  <>
+                    <section aria-label="Primo classificato" style={{ background: Y, height: 94, position: "relative", borderBottom: `1.5px solid ${K0}` }}>
+                      <div style={{ position: "absolute", left: 20, top: 40, fontSize: 16, fontWeight: 500, lineHeight: 1 }}>1°</div>
+                      <h1 style={{ position: "absolute", left: 48, top: 20, fontSize: 36, fontWeight: 500, letterSpacing: "-0.02em", lineHeight: 1, fontFamily: "inherit", margin: 0 }}>{cm0.name}</h1>
+                      <div style={{ position: "absolute", right: 20, top: 28, fontSize: 28, fontWeight: 500, lineHeight: 1 }}>{cm0.rating}</div>
+                      <div style={{ position: "absolute", left: 48, top: 62, fontSize: 8, fontWeight: 300, letterSpacing: "0.05em", lineHeight: 1 }}>
+                        {cm0.matches > 0 ? `${cm0.matches}P · ${cm0.wins}V · ${cm0.losses}S` : "—"}
+                        {cm0.delta !== 0 && <span style={{ color: cm0.delta > 0 ? WIN_COLOR : LOSS_COLOR, marginLeft: 6 }}>{cm0.delta > 0 ? "+" : ""}{cm0.delta}</span>}
+                      </div>
+                    </section>
+                    <ol style={{ listStyle: "none", padding: 0, margin: 0 }} aria-label="Classifica">
+                      {cmRest.map((p, i) => (
+                        <li key={p.name} style={{ height: 56, position: "relative", borderBottom: `1.5px solid #e8e8e8` }}>
+                          <span style={{ position: "absolute", left: 20, top: 19, fontSize: 12, fontWeight: 500, lineHeight: 1 }}>{i + 2}°</span>
+                          <span style={{ position: "absolute", left: 48, top: 14, fontSize: 18, fontWeight: 500, letterSpacing: "-0.01em", lineHeight: 1 }}>{p.name}</span>
+                          <span style={{ position: "absolute", left: 48, top: 36, fontSize: 8, fontWeight: 300, color: GR_LIGHT, lineHeight: 1 }}>
+                            {p.matches > 0 ? `${p.matches}P · ${p.wins}V · ${p.losses}S` : "—"}
+                            {p.delta !== 0 && <span style={{ color: p.delta > 0 ? WIN_COLOR : LOSS_COLOR, marginLeft: 6 }}>{p.delta > 0 ? "+" : ""}{p.delta}</span>}
+                          </span>
+                          <span style={{ position: "absolute", right: 20, top: 18, fontSize: 22, fontWeight: 500, lineHeight: 1 }}>{p.rating}</span>
+                        </li>
+                      ))}
+                    </ol>
+                  </>
+                );
+              })()}
 
               {/* Add player */}
               <form onSubmit={(e) => { e.preventDefault(); addPlayer(); }} style={{ borderTop: `1.5px solid ${K0}`, padding: "0 20px" }}>

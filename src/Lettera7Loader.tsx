@@ -12,7 +12,7 @@ const LETTERS = [
   'M181.68,3.86h-15.03V0h18.85v4.1c-5.18,5.18-9.23,12.9-9.66,22.95h-4.75c.54-9,4.33-18.2,10.59-23.18Z',
 ];
 
-const DUR = '4.6s';
+const DUR = '2.8s';
 
 const CSS = `
 @keyframes l7-flash {
