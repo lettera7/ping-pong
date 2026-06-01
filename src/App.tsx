@@ -46,7 +46,7 @@ const MONTHS_IT = ["Gennaio","Febbraio","Marzo","Aprile","Maggio","Giugno","Lugl
 type MonthlyRecord = { month: string; winner: string; winnerNote?: string; standings: [string, number | null][] };
 
 const MONTHLY_HISTORY_FALLBACK: MonthlyRecord[] = [
-  { month:"Maggio 2026",   winner:"Domitilla", standings:[["Domitilla",1143],["Luca",1103],["Daniele",968],["Stefano",961],["Dario",944],["Martina",890]] },
+  { month:"Maggio 2026",   winner:"Luca", standings:[["Luca",1154],["Domitilla",1122],["Stefano",1004],["Martina",955],["Daniele",895],["Dario",870]] },
   { month:"Aprile 2026",   winner:"Domitilla", standings:[["Domitilla",1147],["Luca",1034],["Stefano",1020],["Daniele",967],["Dario",947],["Martina",894]] },
   { month:"Marzo 2026",    winner:"Domitilla", standings:[["Domitilla",1084],["Luca",1036],["Dario",973],["Martina",954],["Stefano",953]] },
   { month:"Febbraio 2026", winner:"Domitilla", standings:[["Domitilla",null],["Luca",null],["Stefano",null],["Dario",null],["Martina",null],["Daniele",null]] },

@@ -18,10 +18,10 @@ const MONTHLY_HISTORY_FALLBACK: {
   month: number; year: number; winner: string;
   standings: { name: string; rating: number | null }[];
 }[] = [
-  { month: 5, year: 2026, winner: "Domitilla", standings: [
-    { name: "Domitilla", rating: 1143 }, { name: "Luca", rating: 1103 },
-    { name: "Daniele", rating: 968 }, { name: "Stefano", rating: 961 },
-    { name: "Dario", rating: 944 }, { name: "Martina", rating: 890 },
+  { month: 5, year: 2026, winner: "Luca", standings: [
+    { name: "Luca", rating: 1154 }, { name: "Domitilla", rating: 1122 },
+    { name: "Stefano", rating: 1004 }, { name: "Martina", rating: 955 },
+    { name: "Daniele", rating: 895 }, { name: "Dario", rating: 870 },
   ]},
   { month: 4, year: 2026, winner: "Domitilla", standings: [
     { name: "Domitilla", rating: 1147 }, { name: "Luca", rating: 1034 },
