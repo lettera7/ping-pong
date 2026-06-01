@@ -30,17 +30,8 @@ export default function Lettera7Loader({
       aria-live="polite"
       aria-label={label}
     >
-      {videoFailed ? (
-        <img
-          src="/lettera7-loader.gif"
-          alt="Lettera7"
-          width={size}
-          height={size}
-          style={{ display: "block" }}
-        />
-      ) : (
+      {!videoFailed && (
         <video
-          src="/lettera7-loader.webm"
           width={size}
           height={size}
           autoPlay
@@ -48,6 +39,17 @@ export default function Lettera7Loader({
           muted
           playsInline
           onError={() => setVideoFailed(true)}
+          style={{ display: "block" }}
+        >
+          <source src="/lettera7-loader.webm" type="video/webm" />
+        </video>
+      )}
+      {videoFailed && (
+        <img
+          src="/lettera7-loader.gif"
+          alt="Lettera7"
+          width={size}
+          height={size}
           style={{ display: "block" }}
         />
       )}
