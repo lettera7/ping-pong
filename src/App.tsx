@@ -7,6 +7,7 @@ const SCRIPT_URL = import.meta.env.VITE_SCRIPT_URL ?? "https://script.google.com
 const SHEET_ID = import.meta.env.VITE_SHEET_ID ?? "1V4OPHS3g55m5WxOBmPKLkBPvRtCB5jSHJ-c0FvXlN8c";
 const SHEET_CSV_URL = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/export?format=csv&sheet=Matches`;
 const STORAGE_KEY = IS_STAGING ? "pp_matches_staging" : "pp_matches";
+const RATINGS_KEY = "pp_monthly_ratings";
 
 const Y = "#FEFE54";
 const K0 = "#0D0D0D";
@@ -62,61 +63,57 @@ function parseDateIT(s: string): Date {
   return new Date(s);
 }
 
-function computeMonthlyHistory(matches: Match[], now: Date): MonthlyRecord[] {
-  if (matches.length === 0) return MONTHLY_HISTORY_FALLBACK;
+function parseRatingsFromSheet(table: (string | number)[][]): MonthlyRecord[] {
+  if (table.length < 2) return [];
+  const monthMap: Record<string, number> = {};
+  MONTHS_IT.forEach((m, i) => { monthMap[m.toLowerCase()] = i; });
 
-  const withDates = matches
-    .map(m => ({ ...m, _d: parseDateIT(m.date) }))
-    .filter(m => !isNaN(m._d.getTime()))
-    .sort((a, b) => a._d.getTime() - b._d.getTime());
-
-  if (withDates.length === 0) return MONTHLY_HISTORY_FALLBACK;
-
-  const monthSet = new Set<string>();
-  withDates.forEach(m => {
-    monthSet.add(`${m._d.getFullYear()}-${String(m._d.getMonth() + 1).padStart(2, "0")}`);
+  const headers = table[0];
+  const playerRows = table.slice(1).filter(r => {
+    const name = String(r[0] || "").trim();
+    return name && !name.toLowerCase().includes("posto");
   });
 
-  const currentKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
-  const computed: MonthlyRecord[] = [];
+  const records: MonthlyRecord[] = [];
+  let year = 2025;
+  let prevMonthIdx = -1;
 
-  for (const key of [...monthSet].sort().reverse()) {
-    if (key === currentKey) continue;
-    const [yearStr, monthStr] = key.split("-");
-    const year = parseInt(yearStr), month = parseInt(monthStr);
+  for (let col = 1; col < headers.length; col++) {
+    const hdr = String(headers[col] || "").toLowerCase().trim();
+    const monthIdx = monthMap[hdr];
+    if (monthIdx === undefined) continue;
+    if (prevMonthIdx !== -1 && monthIdx < prevMonthIdx) year++;
+    prevMonthIdx = monthIdx;
 
-    const monthMatches = withDates.filter(m => m._d.getMonth() + 1 === month && m._d.getFullYear() === year);
-    if (monthMatches.length === 0) continue;
-
-    // Replay this month from 1000 — same logic as currentMonthView
-    const ratings: Record<string, number> = {};
-    monthMatches.forEach(m => {
-      if (m.scoreA === m.scoreB) return;
-      if (!(m.playerA in ratings)) ratings[m.playerA] = 1000;
-      if (!(m.playerB in ratings)) ratings[m.playerB] = 1000;
-      const rA = ratings[m.playerA], rB = ratings[m.playerB];
-      const eA = 1 / (1 + Math.pow(10, (rB - rA) / 400));
-      const dA = Math.round(K * ((m.scoreA > m.scoreB ? 1 : 0) - eA));
-      ratings[m.playerA] = rA + dA;
-      ratings[m.playerB] = rB - dA;
-    });
-
-    const standings: [string, number][] = Object.entries(ratings)
-      .sort((a, b) => b[1] - a[1])
-      .map(([name, rating]) => [name, Math.round(rating)]);
+    const standings: [string, number | null][] = playerRows
+      .map(r => {
+        const name = String(r[0] || "").trim();
+        const v = r[col];
+        const rating = typeof v === "number" ? v : parseInt(String(v || ""));
+        return [name, isNaN(rating) ? null : rating] as [string, number | null];
+      })
+      .filter(([, r]) => r !== null)
+      .sort((a, b) => (b[1] as number) - (a[1] as number));
 
     if (standings.length === 0) continue;
-
-    // Winner = 1st place in standings
-    const winner = standings[0][0];
-
-    computed.push({ month: `${MONTHS_IT[month - 1]} ${year}`, winner, standings });
+    records.push({ month: `${MONTHS_IT[monthIdx]} ${year}`, winner: standings[0][0], standings });
   }
 
-  // Merge: computed months take priority, fallback fills the rest
-  const computedNames = new Set(computed.map(r => r.month));
-  const merged = [...computed, ...MONTHLY_HISTORY_FALLBACK.filter(h => !computedNames.has(h.month))];
-  return merged.length > 0 ? merged : MONTHLY_HISTORY_FALLBACK;
+  return records.reverse();
+}
+
+function loadCachedRatings(): MonthlyRecord[] {
+  try { const r = localStorage.getItem(RATINGS_KEY); return r ? JSON.parse(r) : []; } catch { return []; }
+}
+
+function computeMonthlyHistory(): MonthlyRecord[] {
+  const sheet = loadCachedRatings();
+  if (sheet.length > 0) {
+    // Merge: sheet data takes priority, fallback fills gaps
+    const sheetMonths = new Set(sheet.map(r => r.month));
+    return [...sheet, ...MONTHLY_HISTORY_FALLBACK.filter(h => !sheetMonths.has(h.month))];
+  }
+  return MONTHLY_HISTORY_FALLBACK;
 }
 
 type RawMatch = { date: string; playerA: string; playerB: string; scoreA: number; scoreB: number };
@@ -238,6 +235,18 @@ export default function App() {
   const loadData = useCallback(async () => {
     setLoading(true);
     const minDelay = new Promise(r => setTimeout(r, 1500));
+
+    // Load monthly ratings from Sheet (background, non-blocking)
+    fetch(SCRIPT_URL + "?action=getRatings")
+      .then(r => r.ok ? r.json() : null)
+      .then(table => {
+        if (Array.isArray(table) && table.length > 1) {
+          const parsed = parseRatingsFromSheet(table);
+          if (parsed.length > 0) localStorage.setItem(RATINGS_KEY, JSON.stringify(parsed));
+        }
+      })
+      .catch(() => { /* silent */ });
+
     try {
       const res = await fetch(SCRIPT_URL);
       if (!res.ok) throw new Error();
@@ -412,7 +421,7 @@ export default function App() {
     setNewPlayer(""); showFlash(name + " aggiunto");
   }
 
-  const monthlyHistory = useMemo(() => computeMonthlyHistory(state?.matches ?? [], now), [state?.matches]);
+  const monthlyHistory = useMemo(() => computeMonthlyHistory(), []);
 
   // Auto-sync the most recently completed month's ratings to Google Sheet.
   // Retries every hour in case the Apps Script wasn't ready on the first attempt.
