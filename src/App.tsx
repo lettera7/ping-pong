@@ -169,22 +169,24 @@ export default function App() {
 
   const loadData = useCallback(async () => {
     setLoading(true);
+    const minDelay = new Promise(r => setTimeout(r, 1500));
     try {
       const res = await fetch(SCRIPT_URL);
       if (!res.ok) throw new Error();
       const matches: RawMatch[] = await res.json();
       if (Array.isArray(matches) && matches.length > 0) {
-        saveToStorage(matches); setState(replayMatches(matches)); setLoading(false); return;
+        saveToStorage(matches); setState(replayMatches(matches)); await minDelay; setLoading(false); return;
       }
     } catch { /* fallback */ }
     try {
       const res = await fetch(SHEET_CSV_URL);
       if (res.ok) {
         const parsed = parseCSV(await res.text());
-        if (parsed.length > 0) { saveToStorage(parsed); setState(replayMatches(parsed)); setLoading(false); return; }
+        if (parsed.length > 0) { saveToStorage(parsed); setState(replayMatches(parsed)); await minDelay; setLoading(false); return; }
       }
     } catch { /* fallback */ }
     setState(replayMatches(loadFromStorage()));
+    await minDelay;
     setLoading(false);
   }, []);
 
