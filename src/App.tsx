@@ -41,7 +41,11 @@ const SEED_MATCHES: RawMatch[] = [
   { date:"05/05/2026", playerA:"Luca",      playerB:"Domitilla", scoreA:11, scoreB:7  },
 ];
 
-const MONTHLY_HISTORY = [
+const MONTHS_IT = ["Gennaio","Febbraio","Marzo","Aprile","Maggio","Giugno","Luglio","Agosto","Settembre","Ottobre","Novembre","Dicembre"];
+
+type MonthlyRecord = { month: string; winner: string; winnerNote?: string; standings: [string, number | null][] };
+
+const MONTHLY_HISTORY_FALLBACK: MonthlyRecord[] = [
   { month:"Aprile 2026",   winner:"Domitilla", standings:[["Domitilla",1147],["Luca",1034],["Stefano",1020],["Daniele",967],["Dario",947],["Martina",894]] },
   { month:"Marzo 2026",    winner:"Domitilla", standings:[["Domitilla",1084],["Luca",1036],["Dario",973],["Martina",954],["Stefano",953]] },
   { month:"Febbraio 2026", winner:"Domitilla", standings:[["Domitilla",null],["Luca",null],["Stefano",null],["Dario",null],["Martina",null],["Daniele",null]] },
@@ -50,6 +54,74 @@ const MONTHLY_HISTORY = [
   { month:"Novembre 2025", winner:"Domitilla", standings:[["Domitilla",1153],["William",1106],["Luca",1033],["Stefano",970],["Dario",938],["Daniele",928],["Martina",872]] },
   { month:"Ottobre 2025",  winner:"Luca", winnerNote:"(mini-finale)", standings:[["Domitilla",1173],["Luca",1117],["Stefano",1034],["Dario",903],["William",900],["Martina",873]] },
 ];
+
+function parseDateIT(s: string): Date {
+  const p = s.split("/");
+  if (p.length === 3) return new Date(Number(p[2]), Number(p[1]) - 1, Number(p[0]));
+  return new Date(s);
+}
+
+function computeMonthlyHistory(matches: Match[], now: Date): MonthlyRecord[] {
+  if (matches.length === 0) return MONTHLY_HISTORY_FALLBACK;
+
+  const withDates = matches
+    .map(m => ({ ...m, _d: parseDateIT(m.date) }))
+    .filter(m => !isNaN(m._d.getTime()))
+    .sort((a, b) => a._d.getTime() - b._d.getTime());
+
+  if (withDates.length === 0) return MONTHLY_HISTORY_FALLBACK;
+
+  const monthSet = new Set<string>();
+  withDates.forEach(m => {
+    monthSet.add(`${m._d.getFullYear()}-${String(m._d.getMonth() + 1).padStart(2, "0")}`);
+  });
+
+  const currentKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+  const computed: MonthlyRecord[] = [];
+
+  for (const key of [...monthSet].sort().reverse()) {
+    if (key === currentKey) continue;
+    const [yearStr, monthStr] = key.split("-");
+    const year = parseInt(yearStr), month = parseInt(monthStr);
+    const endOfMonth = new Date(year, month, 0, 23, 59, 59);
+
+    const monthMatches = withDates.filter(m => m._d.getMonth() + 1 === month && m._d.getFullYear() === year);
+    if (monthMatches.length === 0) continue;
+
+    const playersInMonth = new Set<string>();
+    monthMatches.forEach(m => { playersInMonth.add(m.playerA); playersInMonth.add(m.playerB); });
+
+    const ratings: Record<string, number> = {};
+    for (const player of playersInMonth) {
+      const last = [...withDates]
+        .filter(m => m._d <= endOfMonth && (m.playerA === player || m.playerB === player))
+        .pop();
+      if (last) ratings[player] = last.playerA === player ? last.newA : last.newB;
+    }
+
+    const standings: [string, number][] = [...playersInMonth]
+      .filter(p => ratings[p] !== undefined)
+      .sort((a, b) => (ratings[b] || 0) - (ratings[a] || 0))
+      .map(name => [name, Math.round(ratings[name])]);
+
+    if (standings.length === 0) continue;
+
+    const winCounts: Record<string, number> = {};
+    monthMatches.forEach(m => {
+      const w = m.scoreA > m.scoreB ? m.playerA : m.playerB;
+      winCounts[w] = (winCounts[w] || 0) + 1;
+    });
+    const winner = Object.entries(winCounts)
+      .sort((a, b) => b[1] - a[1] || (ratings[b[0]] || 0) - (ratings[a[0]] || 0))[0]?.[0] || "";
+
+    computed.push({ month: `${MONTHS_IT[month - 1]} ${year}`, winner, standings });
+  }
+
+  // Merge: computed months take priority, fallback fills the rest
+  const computedNames = new Set(computed.map(r => r.month));
+  const merged = [...computed, ...MONTHLY_HISTORY_FALLBACK.filter(h => !computedNames.has(h.month))];
+  return merged.length > 0 ? merged : MONTHLY_HISTORY_FALLBACK;
+}
 
 type RawMatch = { date: string; playerA: string; playerB: string; scoreA: number; scoreB: number };
 type Match = RawMatch & { id: number; winner: string; rA: number; rB: number; newA: number; newB: number; dA: number; dB: number };
@@ -330,6 +402,8 @@ export default function App() {
     setNewPlayer(""); showFlash(name + " aggiunto");
   }
 
+  const monthlyHistory = useMemo(() => computeMonthlyHistory(state?.matches ?? [], now), [state?.matches]);
+
   const storAvailMonths = useMemo(() => {
     if (!state) return [];
     return [...new Set(state.matches.map(m => {
@@ -418,7 +492,7 @@ export default function App() {
               return (
                 <button key={t} type="button" role="tab" aria-selected={active} onClick={() => setStandingsTab(t)}
                   style={{ flex: 1, height: 48, background: active ? Y : "#fff", border: "none", borderRight: t === "current" ? `1.5px solid ${K0}` : "none", fontFamily: "inherit", fontSize: 12, fontWeight: 500, textTransform: "uppercase", cursor: "pointer", color: active ? K0 : GR_LIGHT }}>
-                  {t === "current" ? "Maggio 2026" : "Storico mensile"}
+                  {t === "current" ? `${MONTHS_IT[now.getMonth()]} ${now.getFullYear()}` : "Storico mensile"}
                 </button>
               );
             })}
@@ -469,7 +543,7 @@ export default function App() {
           {/* Monthly history — Figma 1:67 */}
           {standingsTab === "history" && (() => {
             const wins: Record<string, number> = {};
-            MONTHLY_HISTORY.forEach(m => { if (m.winner) wins[m.winner] = (wins[m.winner] || 0) + 1; });
+            monthlyHistory.forEach(m => { if (m.winner) wins[m.winner] = (wins[m.winner] || 0) + 1; });
             const [champ, champWins] = Object.entries(wins).sort((a, b) => b[1] - a[1])[0];
             return (
               <>
@@ -482,7 +556,7 @@ export default function App() {
                 </div>
 
                 {/* Monthly sections */}
-                {MONTHLY_HISTORY.map(month => (
+                {monthlyHistory.map(month => (
                   <div key={month.month}>
                     {/* Section header — Figma: 44px gray, winner badge right half yellow */}
                     <div style={{ height: 44, background: LG, display: "flex", alignItems: "center", borderBottom: `1.5px solid ${K0}` }}>
