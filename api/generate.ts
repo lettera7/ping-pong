@@ -3,7 +3,7 @@ import Anthropic from "@anthropic-ai/sdk";
 
 const SCRIPT_URL =
   process.env.SCRIPT_URL ??
-  "https://script.google.com/macros/s/AKfycbyqms0XJa93Q48ruSOnYgfm4hi4HJ3B5jLXoZkk2GFIeDFO1eE23glP1RNkZ044vPAj/exec";
+  "https://script.google.com/macros/s/AKfycbyHZqlAgOyybQOIfuKf58XczbKCl3EE1WXRIFab0kEptnBu4uSLuAhAX85kX2ZlyD9DLw/exec";
 const BULLETINS_TABLE = process.env.SUPABASE_BULLETINS_TABLE ?? "bulletins";
 
 const MONTHS_IT = [

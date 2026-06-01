@@ -3,7 +3,7 @@ import Lettera7Loader from "./Lettera7Loader";
 
 const K = 24;
 const IS_STAGING = import.meta.env.VITE_IS_STAGING === "true";
-const SCRIPT_URL = import.meta.env.VITE_SCRIPT_URL ?? "https://script.google.com/macros/s/AKfycbyqms0XJa93Q48ruSOnYgfm4hi4HJ3B5jLXoZkk2GFIeDFO1eE23glP1RNkZ044vPAj/exec";
+const SCRIPT_URL = import.meta.env.VITE_SCRIPT_URL ?? "https://script.google.com/macros/s/AKfycbyHZqlAgOyybQOIfuKf58XczbKCl3EE1WXRIFab0kEptnBu4uSLuAhAX85kX2ZlyD9DLw/exec";
 const SHEET_ID = import.meta.env.VITE_SHEET_ID ?? "1V4OPHS3g55m5WxOBmPKLkBPvRtCB5jSHJ-c0FvXlN8c";
 const SHEET_CSV_URL = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/export?format=csv&sheet=Matches`;
 const STORAGE_KEY = IS_STAGING ? "pp_matches_staging" : "pp_matches";
