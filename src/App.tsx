@@ -358,6 +358,20 @@ export default function App() {
     } catch { /* silent */ }
   }
 
+  function syncMonthlyRatingsToSheet(monthName: string, standings: [string, number | null][]) {
+    const parts = monthName.split(" ");
+    if (parts.length !== 2) return;
+    const monthIdx = MONTHS_IT.indexOf(parts[0]);
+    if (monthIdx === -1) return;
+    const month = monthIdx + 1;
+    const year = parseInt(parts[1]);
+    standings.forEach(([player, rating]) => {
+      if (rating === null) return;
+      const p = new URLSearchParams({ action: "setMonthlyRating", month: String(month), year: String(year), player, rating: String(rating) });
+      new Image().src = SCRIPT_URL + "?" + p.toString();
+    });
+  }
+
   async function saveMatch(match: Match) {
     setSaving(true);
     saveToStorage([...loadFromStorage(), { date: match.date, playerA: match.playerA, playerB: match.playerB, scoreA: match.scoreA, scoreB: match.scoreB }]);
@@ -404,6 +418,16 @@ export default function App() {
   }
 
   const monthlyHistory = useMemo(() => computeMonthlyHistory(state?.matches ?? [], now), [state?.matches]);
+
+  // Auto-sync the most recently completed month's ratings to Google Sheet once per month
+  useEffect(() => {
+    if (monthlyHistory.length === 0) return;
+    const latest = monthlyHistory[0];
+    const syncKey = `pp_synced_rating_${latest.month.replace(" ", "_")}`;
+    if (localStorage.getItem(syncKey)) return;
+    syncMonthlyRatingsToSheet(latest.month, latest.standings);
+    localStorage.setItem(syncKey, "1");
+  }, [monthlyHistory]);
 
   const currentMonthView = useMemo(() => {
     const cm = now.getMonth() + 1;
