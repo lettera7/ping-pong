@@ -419,14 +419,16 @@ export default function App() {
 
   const monthlyHistory = useMemo(() => computeMonthlyHistory(state?.matches ?? [], now), [state?.matches]);
 
-  // Auto-sync the most recently completed month's ratings to Google Sheet once per month
+  // Auto-sync the most recently completed month's ratings to Google Sheet.
+  // Retries every hour in case the Apps Script wasn't ready on the first attempt.
   useEffect(() => {
     if (monthlyHistory.length === 0) return;
     const latest = monthlyHistory[0];
     const syncKey = `pp_synced_rating_${latest.month.replace(" ", "_")}`;
-    if (localStorage.getItem(syncKey)) return;
+    const lastAttempt = parseInt(localStorage.getItem(syncKey) ?? "0");
+    if (Date.now() - lastAttempt < 60 * 60 * 1000) return;
     syncMonthlyRatingsToSheet(latest.month, latest.standings);
-    localStorage.setItem(syncKey, "1");
+    localStorage.setItem(syncKey, String(Date.now()));
   }, [monthlyHistory]);
 
   const currentMonthView = useMemo(() => {
