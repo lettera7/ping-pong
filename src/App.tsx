@@ -630,17 +630,63 @@ export default function App() {
 
           {/* Monthly history — Figma 1:67 */}
           {standingsTab === "history" && (() => {
-            const wins: Record<string, number> = {};
-            monthlyHistory.forEach(m => { if (m.winner) wins[m.winner] = (wins[m.winner] || 0) + 1; });
-            const [champ, champWins] = Object.entries(wins).sort((a, b) => b[1] - a[1])[0];
+            const monthWins: Record<string, number> = {};
+            monthlyHistory.forEach(m => { if (m.winner) monthWins[m.winner] = (monthWins[m.winner] || 0) + 1; });
+            const [champ, champWins] = Object.entries(monthWins).sort((a, b) => b[1] - a[1])[0];
+
+            // Overall leaderboard: average rating + months won per player
+            const playerRatings: Record<string, number[]> = {};
+            monthlyHistory.forEach(m => {
+              m.standings.forEach(([name, rating]) => {
+                if (rating === null) return;
+                if (!playerRatings[name as string]) playerRatings[name as string] = [];
+                playerRatings[name as string].push(rating as number);
+              });
+            });
+            const overallStandings = Object.entries(playerRatings)
+              .map(([name, ratings]) => ({
+                name,
+                avg: Math.round(ratings.reduce((s, r) => s + r, 0) / ratings.length),
+                months: ratings.length,
+                wins: monthWins[name] || 0,
+              }))
+              .sort((a, b) => b.avg - a.avg);
+            const [overall0, ...overallRest] = overallStandings;
+
             return (
               <>
-                {/* Champion banner — Figma: 104px black */}
+                {/* Champion banner */}
                 <div style={{ background: K0, height: 104, position: "relative", borderBottom: `1.5px solid ${K0}` }}>
                   <div style={{ position: "absolute", left: 23, top: 22, fontSize: 8, fontWeight: 300, letterSpacing: "0.2em", color: GR_ON_DARK, textTransform: "uppercase" }}>Campione Overall</div>
                   <div style={{ position: "absolute", left: 20, top: 34, fontSize: 36, fontWeight: 500, color: Y, textTransform: "uppercase", letterSpacing: "-0.02em", lineHeight: 1 }}>{champ}</div>
                   <div style={{ position: "absolute", right: 20, top: 34, fontSize: 36, fontWeight: 500, color: Y, lineHeight: 1, textAlign: "right" }}>{champWins}</div>
                   <div style={{ position: "absolute", right: 20, top: 74, fontSize: 8, fontWeight: 300, color: GR_ON_DARK, letterSpacing: "0.15em", textTransform: "uppercase" }}>Mesi vinti</div>
+                </div>
+
+                {/* Overall leaderboard */}
+                <div style={{ borderBottom: `1.5px solid ${K0}` }}>
+                  <div style={{ height: 36, background: LG, display: "flex", alignItems: "center", paddingLeft: 20, paddingRight: 20, borderBottom: `1.5px solid ${K0}` }}>
+                    <span style={{ fontSize: 9, fontWeight: 500, letterSpacing: "0.15em", textTransform: "uppercase", flex: 1 }}>Classifica generale</span>
+                    <span style={{ fontSize: 9, fontWeight: 300, color: GR, letterSpacing: "0.1em", textTransform: "uppercase", width: 64, textAlign: "right" }}>Media</span>
+                    <span style={{ fontSize: 9, fontWeight: 300, color: GR, letterSpacing: "0.1em", textTransform: "uppercase", width: 44, textAlign: "right" }}>🏆</span>
+                  </div>
+                  {/* Hero: 1st overall */}
+                  {overall0 && (
+                    <div style={{ height: 64, background: Y, display: "flex", alignItems: "center", paddingLeft: 20, paddingRight: 20, borderBottom: `1.5px solid #e8e8e8` }}>
+                      <span style={{ fontSize: 12, fontWeight: 500, width: 28, flexShrink: 0 }}>1°</span>
+                      <span style={{ flex: 1, fontSize: 24, fontWeight: 500, letterSpacing: "-0.02em" }}>{overall0.name}</span>
+                      <span style={{ fontSize: 20, fontWeight: 500, width: 64, textAlign: "right" }}>{overall0.avg}</span>
+                      <span style={{ fontSize: 20, fontWeight: 500, width: 44, textAlign: "right" }}>{overall0.wins || "—"}</span>
+                    </div>
+                  )}
+                  {overallRest.map((p, i) => (
+                    <div key={p.name} style={{ height: 44, display: "flex", alignItems: "center", paddingLeft: 20, paddingRight: 20, borderBottom: `1.5px solid #ededed` }}>
+                      <span style={{ fontSize: 10, fontWeight: 300, color: GR_LIGHT, width: 28, flexShrink: 0 }}>{i + 2}°</span>
+                      <span style={{ flex: 1, fontSize: 16, fontWeight: 400 }}>{p.name}</span>
+                      <span style={{ fontSize: 16, fontWeight: 500, width: 64, textAlign: "right" }}>{p.avg}</span>
+                      <span style={{ fontSize: 14, fontWeight: p.wins > 0 ? 500 : 300, color: p.wins > 0 ? K0 : GR_LIGHT, width: 44, textAlign: "right" }}>{p.wins || "—"}</span>
+                    </div>
+                  ))}
                 </div>
 
                 {/* Monthly sections */}
