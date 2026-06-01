@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, CSSProperties, useMemo } from "react";
+import Lettera7Loader from "./Lettera7Loader";
 
 const K = 24;
 const IS_STAGING = import.meta.env.VITE_IS_STAGING === "true";
@@ -346,12 +347,7 @@ export default function App() {
 
   const W: CSSProperties = { minHeight: "100dvh", background: "#fff", color: K0, fontFamily: "'Lettera7Diatype', 'Helvetica Neue', sans-serif", maxWidth: 600, margin: "0 auto", paddingBottom: 72, position: "relative" };
 
-  if (loading) return (
-    <div style={{ ...W, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 20 }}>
-      <img src="/lettera7-01.png" alt="Lettera7" style={{ width: 120 }} />
-      <div style={{ fontSize: 10, letterSpacing: "0.3em", color: GR, textTransform: "uppercase" }}>Caricamento…</div>
-    </div>
-  );
+  if (loading) return <Lettera7Loader />;
 
   const { players, matches } = state!;
   const standings = Object.entries(players).sort((a, b) => b[1].rating - a[1].rating);
