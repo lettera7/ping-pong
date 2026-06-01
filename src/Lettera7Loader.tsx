@@ -1,4 +1,4 @@
-import { CSSProperties, useState } from "react";
+import { useState } from "react";
 
 interface Lettera7LoaderProps {
   label?: string;
@@ -9,44 +9,62 @@ interface Lettera7LoaderProps {
 export default function Lettera7Loader({
   label = "Caricamento…",
   size = 220,
-  background = "#fff",
+  background = "#ffffff",
 }: Lettera7LoaderProps) {
-  const [useGif, setUseGif] = useState(false);
-
-  const wrap: CSSProperties = {
-    position: "fixed",
-    inset: 0,
-    background,
-    display: "flex",
-    flexDirection: "column",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 0,
-    zIndex: 9999,
-  };
+  const [videoFailed, setVideoFailed] = useState(false);
 
   return (
-    <div style={wrap} role="status" aria-live="polite" aria-label={label}>
-      {useGif ? (
+    <div
+      style={{
+        position: "fixed",
+        inset: 0,
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "center",
+        justifyContent: "center",
+        gap: 8,
+        background,
+        zIndex: 9999,
+      }}
+      role="status"
+      aria-live="polite"
+      aria-label={label}
+    >
+      {videoFailed ? (
         <img
           src="/lettera7-loader.gif"
-          alt=""
-          aria-hidden="true"
-          style={{ width: size, height: size, objectFit: "contain" }}
+          alt="Lettera7"
+          width={size}
+          height={size}
+          style={{ display: "block" }}
         />
       ) : (
         <video
           src="/lettera7-loader.webm"
+          width={size}
+          height={size}
           autoPlay
           loop
           muted
           playsInline
-          aria-hidden="true"
-          style={{ width: size, height: size, objectFit: "contain" }}
-          onError={() => setUseGif(true)}
+          onError={() => setVideoFailed(true)}
+          style={{ display: "block" }}
         />
       )}
-      <span className="sr-only">{label}</span>
+
+      {label && (
+        <span
+          style={{
+            fontFamily: "system-ui, sans-serif",
+            fontSize: 13,
+            letterSpacing: "0.25em",
+            textTransform: "uppercase",
+            color: "#6b6b6b",
+          }}
+        >
+          {label}
+        </span>
+      )}
     </div>
   );
 }
