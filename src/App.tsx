@@ -1,12 +1,29 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 
 const K = 24;
-const SCRIPT_URL = "https://script.google.com/macros/s/AKfycbxCMuzQk90P0D9vwBpZUTD-ifLAc8MokociQdNgy8Nd4xB1Duboj7CUT6syA98P-ISM/exec";
+const IS_STAGING = window.location.hostname === "localhost";
+const SCRIPT_URL = import.meta.env.VITE_SCRIPT_URL ?? "https://script.google.com/macros/s/AKfycbyHZqlAgOyybQOIfuKf58XczbKCl3EE1WXRIFab0kEptnBu4uSLuAhAX85kX2ZlyD9DLw/exec";
 const YELLOW = "#F5E642";
 const BLACK = "#0D0D0D";
 const GRAY = "#888";
 const LGRAY = "#f5f5f5";
-const STORAGE_KEY = "pp_matches";
+const STORAGE_KEY = IS_STAGING ? "pp_matches_staging" : "pp_matches";
+const RATINGS_KEY = "pp_monthly_ratings";
+const MONTHS_IT = ["Gennaio","Febbraio","Marzo","Aprile","Maggio","Giugno","Luglio","Agosto","Settembre","Ottobre","Novembre","Dicembre"];
+
+function getCurrentMonthLabel(): string {
+  const now = new Date();
+  return `${MONTHS_IT[now.getMonth()]} ${now.getFullYear()}`;
+}
+
+function getMatchMonthLabel(dateStr: string): string {
+  const parts = dateStr.split("/");
+  if (parts.length !== 3) return "";
+  const m = parseInt(parts[1]) - 1;
+  const y = parseInt(parts[2]);
+  if (isNaN(m) || isNaN(y) || m < 0 || m > 11) return "";
+  return `${MONTHS_IT[m]} ${y}`;
+}
 
 const SEED_MATCHES = [
   { date:"05/05/2026", playerA:"Domitilla", playerB:"Stefano",   scoreA:11, scoreB:3  },
@@ -31,20 +48,23 @@ const SEED_MATCHES = [
   { date:"05/05/2026", playerA:"Luca",      playerB:"Domitilla", scoreA:11, scoreB:7  },
 ];
 
-const MONTHLY_HISTORY = [
+type RawMatch = { date: string; playerA: string; playerB: string; scoreA: number; scoreB: number };
+type Match = RawMatch & { id: number; winner: string; rA: number; rB: number; newA: number; newB: number; dA: number; dB: number };
+type PlayerStats = { rating: number; wins: number; losses: number; matches: number };
+type GameState = { players: Record<string, PlayerStats>; matches: Match[] };
+type MonthlyRecord = { month: string; winner: string; winnerNote?: string; standings: [string, number | null][] };
+
+// Source of truth for historical months — winners manually curated
+const MONTHLY_HISTORY_FALLBACK: MonthlyRecord[] = [
+  { month:"Maggio 2026",   winner:"Luca",      standings:[["Luca",1154],["Domitilla",1122],["Stefano",1004],["Martina",955],["Daniele",895],["Dario",870]] },
   { month:"Aprile 2026",   winner:"Domitilla", standings:[["Domitilla",1147],["Luca",1034],["Stefano",1020],["Daniele",967],["Dario",947],["Martina",894]] },
   { month:"Marzo 2026",    winner:"Domitilla", standings:[["Domitilla",1084],["Luca",1036],["Dario",973],["Martina",954],["Stefano",953]] },
   { month:"Febbraio 2026", winner:"Domitilla", standings:[["Domitilla",null],["Luca",null],["Stefano",null],["Dario",null],["Martina",null],["Daniele",null]] },
   { month:"Gennaio 2026",  winner:"Luca",      standings:[["Luca",1158],["Daniele",1004],["Dario",1003],["Domitilla",997],["Stefano",946],["Martina",892]] },
   { month:"Dicembre 2025", winner:"Domitilla", standings:[["Domitilla",1046],["Luca",1033],["Daniele",998],["Stefano",994],["Dario",993],["Martina",981],["William",955]] },
   { month:"Novembre 2025", winner:"Domitilla", standings:[["Domitilla",1153],["William",1106],["Luca",1033],["Stefano",970],["Dario",938],["Daniele",928],["Martina",872]] },
-  { month:"Ottobre 2025",  winner:"Luca", winnerNote:"(mini-finale)", standings:[["Domitilla",1173],["Luca",1117],["Stefano",1034],["Dario",903],["William",900],["Martina",873]] },
+  { month:"Ottobre 2025",  winner:"Luca",      winnerNote:"(mini-finale)", standings:[["Domitilla",1173],["Luca",1117],["Stefano",1034],["Dario",903],["William",900],["Martina",873]] },
 ];
-
-type RawMatch = { date: string; playerA: string; playerB: string; scoreA: number; scoreB: number };
-type Match = RawMatch & { id: number; winner: string; rA: number; rB: number; newA: number; newB: number; dA: number; dB: number };
-type PlayerStats = { rating: number; wins: number; losses: number; matches: number };
-type GameState = { players: Record<string, PlayerStats>; matches: Match[] };
 
 function replayMatches(rawMatches: RawMatch[]): GameState {
   const players: Record<string, PlayerStats> = {};
@@ -79,7 +99,97 @@ function loadFromStorage(): RawMatch[] {
 function saveToStorage(matches: RawMatch[]) {
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(matches));
-  } catch { /* quota exceeded — silent */ }
+  } catch { /* quota exceeded */ }
+}
+
+function loadCachedRatings(): MonthlyRecord[] {
+  try {
+    const raw = localStorage.getItem(RATINGS_KEY);
+    return raw ? JSON.parse(raw) : [];
+  } catch { return []; }
+}
+
+function parseRatingsFromSheet(table: (string | number)[][]): MonthlyRecord[] {
+  if (table.length < 2) return [];
+  const monthMap: Record<string, number> = {};
+  MONTHS_IT.forEach((m, i) => { monthMap[m.toLowerCase()] = i; });
+  const headers = table[0];
+  const playerRows = table.slice(1).filter(r => {
+    const name = String(r[0] || "").trim();
+    return name && !name.toLowerCase().includes("posto");
+  });
+  const records: MonthlyRecord[] = [];
+  let year = 2025;
+  let prevMonthIdx = -1;
+  for (let col = 1; col < headers.length; col++) {
+    const hdr = String(headers[col] || "").toLowerCase().trim();
+    const monthIdx = monthMap[hdr];
+    if (monthIdx === undefined) continue;
+    if (prevMonthIdx !== -1 && monthIdx < prevMonthIdx) year++;
+    prevMonthIdx = monthIdx;
+    const standings: [string, number | null][] = playerRows
+      .map(r => {
+        const name = String(r[0] || "").trim();
+        const v = r[col];
+        const rating = typeof v === "number" ? v : parseInt(String(v || ""));
+        return [name, isNaN(rating) ? null : rating] as [string, number | null];
+      })
+      .filter(([, r]) => r !== null)
+      .sort((a, b) => (b[1] as number) - (a[1] as number));
+    if (standings.length === 0) continue;
+    const monthName = `${MONTHS_IT[monthIdx]} ${year}`;
+    // Preserve manually curated winner (handles mini-finale etc.)
+    const fallback = MONTHLY_HISTORY_FALLBACK.find(h => h.month === monthName);
+    records.push({
+      month: monthName,
+      winner: fallback?.winner ?? standings[0][0],
+      winnerNote: fallback?.winnerNote,
+      standings,
+    });
+  }
+  return records.reverse();
+}
+
+function computeMonthlyHistory(): MonthlyRecord[] {
+  const sheet = loadCachedRatings();
+  if (sheet.length > 0) {
+    const sheetMonths = new Set(sheet.map(r => r.month));
+    return [...sheet, ...MONTHLY_HISTORY_FALLBACK.filter(h => !sheetMonths.has(h.month))];
+  }
+  return MONTHLY_HISTORY_FALLBACK;
+}
+
+function syncMonthlyRatingsToSheet(monthName: string, standings: [string, number | null][]) {
+  const SYNC_KEY = `pp_synced_${monthName}`;
+  const last = localStorage.getItem(SYNC_KEY);
+  if (last && Date.now() - parseInt(last) < 3600000) return;
+  standings.forEach(([name, rating]) => {
+    if (rating === null) return;
+    const params = new URLSearchParams({ action: "setMonthlyRating", month: monthName, player: name, rating: String(rating) });
+    new Image().src = SCRIPT_URL + "?" + params.toString();
+  });
+  localStorage.setItem(SYNC_KEY, String(Date.now()));
+}
+
+function maybeSyncCompletedMonths(rawMatches: RawMatch[]) {
+  const currentMonth = getCurrentMonthLabel();
+  const cachedMonths = new Set(loadCachedRatings().map(r => r.month));
+  const monthsWithMatches: Record<string, RawMatch[]> = {};
+  rawMatches.forEach(m => {
+    const label = getMatchMonthLabel(m.date);
+    if (label && label !== currentMonth) {
+      if (!monthsWithMatches[label]) monthsWithMatches[label] = [];
+      monthsWithMatches[label].push(m);
+    }
+  });
+  Object.entries(monthsWithMatches).forEach(([month, ms]) => {
+    if (cachedMonths.has(month)) return;
+    const monthState = replayMatches(ms);
+    const standings = Object.entries(monthState.players)
+      .sort((a, b) => b[1].rating - a[1].rating)
+      .map(([name, p]) => [name, p.rating] as [string, number | null]);
+    syncMonthlyRatingsToSheet(month, standings);
+  });
 }
 
 export default function App() {
@@ -96,18 +206,50 @@ export default function App() {
   function showFlash(msg: string) { setFlash(msg); setTimeout(() => setFlash(null), 2500); }
 
   const loadData = useCallback(() => {
-    setState(replayMatches(loadFromStorage()));
+    const raw = loadFromStorage();
+    setState(replayMatches(raw));
+    maybeSyncCompletedMonths(raw);
+    // Fetch latest ratings from Sheet in background
+    try {
+      const img = new Image();
+      img.src = SCRIPT_URL + "?action=getRatings&cb=" + Date.now();
+      // Use fetch to actually get the JSON response
+      fetch(SCRIPT_URL + "?action=getRatings").then(r => r.json()).then((data: (string | number)[][]) => {
+        if (Array.isArray(data) && data.length > 1) {
+          const records = parseRatingsFromSheet(data);
+          if (records.length > 0) {
+            localStorage.setItem(RATINGS_KEY, JSON.stringify(records));
+          }
+        }
+      }).catch(() => { /* offline — use cache */ });
+    } catch { /* best-effort */ }
   }, []);
 
   useEffect(() => { loadData(); }, [loadData]);
+
+  // Current month state: replay only this month's matches from 1000
+  const currentMonthState = useMemo(() => {
+    if (!state) return null;
+    const currentMonth = getCurrentMonthLabel();
+    const raw = loadFromStorage();
+    const monthMatches = raw.filter(m => getMatchMonthLabel(m.date) === currentMonth);
+    const gs = replayMatches(monthMatches);
+    // Ensure all known players appear at 1000 even with no matches yet
+    const allPlayers = { ...gs.players };
+    Object.keys(state.players).forEach(name => {
+      if (!allPlayers[name]) allPlayers[name] = { rating: 1000, wins: 0, losses: 0, matches: 0 };
+    });
+    return { ...gs, players: allPlayers };
+  }, [state]);
+
+  // Monthly history (Sheet cache + fallback)
+  const monthlyHistory = useMemo(() => computeMonthlyHistory(), []);
 
   async function saveMatch(match: Match) {
     setSaving(true);
     const existing = loadFromStorage();
     const updated: RawMatch[] = [...existing, { date: match.date, playerA: match.playerA, playerB: match.playerB, scoreA: match.scoreA, scoreB: match.scoreB }];
     saveToStorage(updated);
-
-    // Mirror to Google Sheet via img (fire-and-forget, no CORS issue)
     try {
       const params = new URLSearchParams({
         action: "addMatch",
@@ -119,19 +261,19 @@ export default function App() {
       });
       new Image().src = SCRIPT_URL + "?" + params.toString();
     } catch { /* best-effort */ }
-
     showFlash("Partita salvata!");
     setSaving(false);
   }
 
   function submitMatch() {
-    if (!state) return;
+    if (!state || !currentMonthState) return;
     const scoreA = parseInt(sA), scoreB = parseInt(sB);
     if (!pA || !pB || pA === pB) return showFlash("Scegli due giocatori diversi.");
     if (isNaN(scoreA) || isNaN(scoreB) || scoreA < 0 || scoreB < 0) return showFlash("Punteggi non validi.");
     if (scoreA === scoreB) return showFlash("Niente pareggi.");
-    const { players, matches } = state;
-    const rA = players[pA]?.rating ?? 1000, rB = players[pB]?.rating ?? 1000;
+    // Use monthly-reset ratings for ELO calculation
+    const rA = currentMonthState.players[pA]?.rating ?? 1000;
+    const rB = currentMonthState.players[pB]?.rating ?? 1000;
     const sAv = scoreA > scoreB ? 1 : 0;
     const eA = 1 / (1 + Math.pow(10, (rB - rA) / 400));
     const dA = Math.round(K * (sAv - eA));
@@ -139,11 +281,12 @@ export default function App() {
     const winner = scoreA > scoreB ? pA : pB;
     const date = new Date().toLocaleDateString("it-IT");
     const match: Match = { id: Date.now(), date, playerA: pA, playerB: pB, scoreA, scoreB, winner, rA, rB, newA, newB, dA, dB: -dA };
+    const { players, matches } = state;
     setState({
       players: {
         ...players,
-        [pA]: { ...(players[pA] ?? { rating: 1000, wins: 0, losses: 0, matches: 0 }), rating: newA, matches: (players[pA]?.matches ?? 0) + 1, wins: (players[pA]?.wins ?? 0) + (scoreA > scoreB ? 1 : 0), losses: (players[pA]?.losses ?? 0) + (scoreB > scoreA ? 1 : 0) },
-        [pB]: { ...(players[pB] ?? { rating: 1000, wins: 0, losses: 0, matches: 0 }), rating: newB, matches: (players[pB]?.matches ?? 0) + 1, wins: (players[pB]?.wins ?? 0) + (scoreB > scoreA ? 1 : 0), losses: (players[pB]?.losses ?? 0) + (scoreA > scoreB ? 1 : 0) },
+        [pA]: { ...(players[pA] ?? { rating: 1000, wins: 0, losses: 0, matches: 0 }), rating: players[pA]?.rating ?? 1000, matches: (players[pA]?.matches ?? 0) + 1, wins: (players[pA]?.wins ?? 0) + (scoreA > scoreB ? 1 : 0), losses: (players[pA]?.losses ?? 0) + (scoreB > scoreA ? 1 : 0) },
+        [pB]: { ...(players[pB] ?? { rating: 1000, wins: 0, losses: 0, matches: 0 }), rating: players[pB]?.rating ?? 1000, matches: (players[pB]?.matches ?? 0) + 1, wins: (players[pB]?.wins ?? 0) + (scoreB > scoreA ? 1 : 0), losses: (players[pB]?.losses ?? 0) + (scoreA > scoreB ? 1 : 0) },
       },
       matches: [...matches, match],
     });
@@ -161,7 +304,7 @@ export default function App() {
     setNewPlayer(""); showFlash(name + " aggiunto!");
   }
 
-  if (!state) return (
+  if (!state || !currentMonthState) return (
     <div style={{ minHeight: "100vh", background: "#fff", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", fontFamily: "'Helvetica Neue',Helvetica,Arial,sans-serif" }}>
       <div style={{ fontWeight: 900, fontSize: 32, letterSpacing: -2, marginBottom: 16 }}>PING PONG</div>
       <div style={{ fontSize: 11, letterSpacing: 3, color: GRAY, textTransform: "uppercase" }}>Caricamento...</div>
@@ -169,7 +312,8 @@ export default function App() {
   );
 
   const { players, matches } = state;
-  const standings = Object.entries(players).sort((a, b) => b[1].rating - a[1].rating);
+  const currentMonthLabel = getCurrentMonthLabel();
+  const currentStandings = Object.entries(currentMonthState.players).sort((a, b) => b[1].rating - a[1].rating);
 
   return (
     <div style={{ minHeight: "100vh", background: "#fff", color: BLACK, fontFamily: "'Helvetica Neue',Helvetica,Arial,sans-serif", maxWidth: 480, margin: "0 auto", paddingBottom: 80 }}>
@@ -215,7 +359,7 @@ export default function App() {
       {view === "standings" && (
         <div style={{ padding: "20px 20px 0" }}>
           <div style={{ display: "flex", marginBottom: 20, borderBottom: `2px solid ${BLACK}` }}>
-            {[{ id: "current", label: "Maggio 2026" }, { id: "history", label: "Storico mensile" }].map(t => (
+            {[{ id: "current", label: currentMonthLabel }, { id: "history", label: "Storico mensile" }].map(t => (
               <button key={t.id} onClick={() => setStandingsTab(t.id)} style={{ flex: 1, background: standingsTab === t.id ? YELLOW : "transparent", border: "none", borderBottom: standingsTab === t.id ? `2px solid ${BLACK}` : "none", marginBottom: -2, padding: "10px 0", fontFamily: "inherit", fontWeight: standingsTab === t.id ? 900 : 400, fontSize: 10, letterSpacing: 2, textTransform: "uppercase", cursor: "pointer", color: BLACK }}>
                 {t.label}
               </button>
@@ -223,8 +367,8 @@ export default function App() {
           </div>
 
           {standingsTab === "current" && <>
-            <div style={{ fontSize: 10, letterSpacing: 4, color: GRAY, textTransform: "uppercase", marginBottom: 12 }}>Classifica Maggio 2026</div>
-            {standings.map(([name, p], i) => (
+            <div style={{ fontSize: 10, letterSpacing: 4, color: GRAY, textTransform: "uppercase", marginBottom: 12 }}>Classifica {currentMonthLabel}</div>
+            {currentStandings.map(([name, p], i) => (
               <div key={name} style={{ display: "flex", alignItems: "center", borderTop: `1px solid ${i === 0 ? BLACK : "#e0e0e0"}`, padding: "13px 0", gap: 10 }}>
                 <div style={{ width: 22, fontWeight: 900, fontSize: 12, color: i < 3 ? BLACK : GRAY }}>{i + 1}</div>
                 {i === 0 && <div style={{ background: YELLOW, width: 8, height: 8, borderRadius: "50%", flexShrink: 0 }} />}
@@ -246,20 +390,57 @@ export default function App() {
 
           {standingsTab === "history" && (() => {
             const wins: Record<string, number> = {};
-            MONTHLY_HISTORY.forEach(m => { if (m.winner) wins[m.winner] = (wins[m.winner] || 0) + 1; });
-            const champion = Object.entries(wins).sort((a, b) => b[1] - a[1])[0];
+            monthlyHistory.forEach(m => { if (m.winner) wins[m.winner] = (wins[m.winner] || 0) + 1; });
+            const leaderboard = Object.entries(wins).sort((a, b) => b[1] - a[1]);
+            const champion = leaderboard[0];
+            // Compute avg rating per player across all months with data
+            const ratingTotals: Record<string, { sum: number; count: number }> = {};
+            monthlyHistory.forEach(m => {
+              m.standings.forEach(([name, rating]) => {
+                if (rating === null) return;
+                if (!ratingTotals[name]) ratingTotals[name] = { sum: 0, count: 0 };
+                ratingTotals[name].sum += rating;
+                ratingTotals[name].count += 1;
+              });
+            });
+            const allPlayers = Object.keys(ratingTotals).sort((a, b) => {
+              const avgA = ratingTotals[a].sum / ratingTotals[a].count;
+              const avgB = ratingTotals[b].sum / ratingTotals[b].count;
+              return avgB - avgA;
+            });
             return <>
-              <div style={{ background: BLACK, padding: "14px 16px", marginBottom: 24, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+              {/* Champion banner */}
+              <div style={{ background: BLACK, padding: "14px 16px", marginBottom: 16, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
                 <div>
                   <div style={{ fontSize: 9, letterSpacing: 3, color: "#aaa", textTransform: "uppercase", marginBottom: 3 }}>Campione Overall</div>
-                  <div style={{ fontWeight: 900, fontSize: 20, color: "#fff" }}>🏆 {champion[0]}</div>
+                  <div style={{ fontWeight: 900, fontSize: 20, color: "#fff" }}>🏆 {champion?.[0]}</div>
                 </div>
                 <div style={{ textAlign: "right" }}>
-                  <div style={{ background: YELLOW, fontWeight: 900, fontSize: 22, padding: "6px 14px" }}>{champion[1]}</div>
+                  <div style={{ background: YELLOW, fontWeight: 900, fontSize: 22, padding: "6px 14px" }}>{champion?.[1]}</div>
                   <div style={{ fontSize: 9, letterSpacing: 2, color: "#aaa", marginTop: 4, textTransform: "uppercase" }}>mesi vinti</div>
                 </div>
               </div>
-              {MONTHLY_HISTORY.map((month) => (
+
+              {/* Overall leaderboard */}
+              <div style={{ marginBottom: 28 }}>
+                <div style={{ fontSize: 9, letterSpacing: 3, color: GRAY, textTransform: "uppercase", marginBottom: 10 }}>Classifica Generale</div>
+                {allPlayers.map((name, i) => {
+                  const avg = Math.round(ratingTotals[name].sum / ratingTotals[name].count);
+                  const w = wins[name] ?? 0;
+                  return (
+                    <div key={name} style={{ display: "flex", alignItems: "center", borderTop: `1px solid ${i === 0 ? BLACK : "#e0e0e0"}`, padding: "10px 0", gap: 10 }}>
+                      <div style={{ width: 22, fontWeight: 900, fontSize: 12, color: i < 3 ? BLACK : GRAY }}>{i + 1}</div>
+                      <div style={{ flex: 1 }}>
+                        <div style={{ fontWeight: i === 0 ? 700 : 400, fontSize: 14 }}>{name}</div>
+                        <div style={{ fontSize: 10, color: GRAY, marginTop: 2 }}>Media {avg} · {w > 0 ? `🏆 ${w} ${w === 1 ? "mese" : "mesi"}` : "0 mesi"}</div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+
+              {/* Monthly sections */}
+              {monthlyHistory.map((month) => (
                 <div key={month.month} style={{ marginBottom: 28 }}>
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
                     <div style={{ fontWeight: 900, fontSize: 13, textTransform: "uppercase", letterSpacing: 1 }}>{month.month}</div>
@@ -302,8 +483,8 @@ export default function App() {
           </div>
           {pA && pB && (
             <div style={{ background: LGRAY, padding: "10px 14px", marginBottom: 14, display: "flex", justifyContent: "space-between", fontSize: 11 }}>
-              <span><strong>{pA}</strong> <span style={{ color: GRAY }}>{players[pA]?.rating ?? 1000}</span></span>
-              <span><strong>{pB}</strong> <span style={{ color: GRAY }}>{players[pB]?.rating ?? 1000}</span></span>
+              <span><strong>{pA}</strong> <span style={{ color: GRAY }}>{currentMonthState.players[pA]?.rating ?? 1000}</span></span>
+              <span><strong>{pB}</strong> <span style={{ color: GRAY }}>{currentMonthState.players[pB]?.rating ?? 1000}</span></span>
             </div>
           )}
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 20 }}>
