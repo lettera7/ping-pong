@@ -202,6 +202,7 @@ export default function App() {
   const [flash, setFlash] = useState<string | null>(null);
   const [lastResult, setLastResult] = useState<{ winner: string; pA: string; pB: string; scoreA: number; scoreB: number; dA: number; dB: number; newA: number; newB: number } | null>(null);
   const [saving, setSaving] = useState(false);
+  const [sheetRatings, setSheetRatings] = useState<MonthlyRecord[]>(() => loadCachedRatings());
 
   function showFlash(msg: string) { setFlash(msg); setTimeout(() => setFlash(null), 2500); }
 
@@ -209,20 +210,15 @@ export default function App() {
     const raw = loadFromStorage();
     setState(replayMatches(raw));
     maybeSyncCompletedMonths(raw);
-    // Fetch latest ratings from Sheet in background
-    try {
-      const img = new Image();
-      img.src = SCRIPT_URL + "?action=getRatings&cb=" + Date.now();
-      // Use fetch to actually get the JSON response
-      fetch(SCRIPT_URL + "?action=getRatings").then(r => r.json()).then((data: (string | number)[][]) => {
-        if (Array.isArray(data) && data.length > 1) {
-          const records = parseRatingsFromSheet(data);
-          if (records.length > 0) {
-            localStorage.setItem(RATINGS_KEY, JSON.stringify(records));
-          }
+    fetch(SCRIPT_URL + "?action=getRatings").then(r => r.json()).then((data: (string | number)[][]) => {
+      if (Array.isArray(data) && data.length > 1) {
+        const records = parseRatingsFromSheet(data);
+        if (records.length > 0) {
+          localStorage.setItem(RATINGS_KEY, JSON.stringify(records));
+          setSheetRatings(records);
         }
-      }).catch(() => { /* offline — use cache */ });
-    } catch { /* best-effort */ }
+      }
+    }).catch(() => { /* offline — use cache */ });
   }, []);
 
   useEffect(() => { loadData(); }, [loadData]);
@@ -242,8 +238,14 @@ export default function App() {
     return { ...gs, players: allPlayers };
   }, [state]);
 
-  // Monthly history (Sheet cache + fallback)
-  const monthlyHistory = useMemo(() => computeMonthlyHistory(), []);
+  // Monthly history: sheet data merged with fallback (sheet takes priority)
+  const monthlyHistory = useMemo(() => {
+    if (sheetRatings.length > 0) {
+      const sheetMonths = new Set(sheetRatings.map(r => r.month));
+      return [...sheetRatings, ...MONTHLY_HISTORY_FALLBACK.filter(h => !sheetMonths.has(h.month))];
+    }
+    return MONTHLY_HISTORY_FALLBACK;
+  }, [sheetRatings]);
 
   async function saveMatch(match: Match) {
     setSaving(true);
