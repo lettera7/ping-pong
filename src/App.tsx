@@ -479,8 +479,8 @@ export default function App() {
       const rA = ratings[m.playerA], rB = ratings[m.playerB];
       const eA = 1 / (1 + Math.pow(10, (rB - rA) / 400));
       const dA = Math.round(K * ((m.scoreA > m.scoreB ? 1 : 0) - eA));
-      ratings[m.playerA] = rA + dA;
-      ratings[m.playerB] = rB - dA;
+      ratings[m.playerA] = Math.round(rA + dA);
+      ratings[m.playerB] = Math.round(rB - dA);
       const wA = m.scoreA > m.scoreB;
       wins[m.playerA] = (wins[m.playerA] || 0) + (wA ? 1 : 0);
       losses[m.playerA] = (losses[m.playerA] || 0) + (wA ? 0 : 1);
