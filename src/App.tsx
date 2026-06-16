@@ -133,7 +133,8 @@ function replayMatches(rawMatches: RawMatch[]): GameState {
     const { playerA, playerB, scoreA, scoreB, date } = m;
     if (!playerA || !playerB || isNaN(scoreA) || isNaN(scoreB) || scoreA === scoreB) return;
     // Reset all ratings to 1000 at the start of each new month
-    const matchMonth = getMatchMonthLabel(date);
+    const d = parseDateIT(date);
+    const matchMonth = `${MONTHS_IT[d.getMonth()]} ${d.getFullYear()}`;
     if (matchMonth && matchMonth !== currentMonth) {
       currentMonth = matchMonth;
       Object.keys(players).forEach(p => { players[p] = { ...players[p], rating: 1000 }; });
