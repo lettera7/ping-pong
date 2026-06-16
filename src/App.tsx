@@ -128,9 +128,16 @@ type BulletinFull = BulletinMeta & { content: string; standings_snapshot: unknow
 function replayMatches(rawMatches: RawMatch[]): GameState {
   const players: Record<string, PlayerStats> = {};
   const matches: Match[] = [];
+  let currentMonth = "";
   rawMatches.forEach((m, i) => {
     const { playerA, playerB, scoreA, scoreB, date } = m;
     if (!playerA || !playerB || isNaN(scoreA) || isNaN(scoreB) || scoreA === scoreB) return;
+    // Reset all ratings to 1000 at the start of each new month
+    const matchMonth = getMatchMonthLabel(date);
+    if (matchMonth && matchMonth !== currentMonth) {
+      currentMonth = matchMonth;
+      Object.keys(players).forEach(p => { players[p] = { ...players[p], rating: 1000 }; });
+    }
     if (!players[playerA]) players[playerA] = { rating: 1000, wins: 0, losses: 0, matches: 0 };
     if (!players[playerB]) players[playerB] = { rating: 1000, wins: 0, losses: 0, matches: 0 };
     const rA = players[playerA].rating, rB = players[playerB].rating;
