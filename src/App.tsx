@@ -499,6 +499,7 @@ export default function App() {
     });
 
     const sorted = Object.entries(ratings)
+      .filter(([name]) => (matchCounts[name] || 0) > 0)
       .sort((a, b) => b[1] - a[1])
       .map(([name, rating]) => ({
         name, rating: Math.round(rating),
@@ -507,6 +508,7 @@ export default function App() {
         losses: losses[name] || 0,
         matches: matchCounts[name] || 0,
       }));
+    
 
     return { standings: sorted, hasMatches: monthRaw.length > 0, matchCount: monthRaw.length };
   }, [state?.matches, monthlyHistory]);
