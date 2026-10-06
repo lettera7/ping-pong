@@ -244,10 +244,18 @@ export default function App() {
   function showFlash(msg: string) { setFlash(msg); setTimeout(() => setFlash(null), 2500); }
 
   const loadData = useCallback(async () => {
-    setLoading(true);
-    const minDelay = new Promise(r => setTimeout(r, 1500));
+    // 1. CACHE-FIRST: se ho già le partite in locale, mostro subito la classifica (0 attesa).
+    //    L'app di solito si apre per aggiungere un match e vedere la classifica: la cache basta.
+    const cached = loadFromStorage();
+    const hasCache = cached.length > 0;
+    if (hasCache) {
+      setState(replayMatches(cached));
+      setLoading(false);
+    } else {
+      setLoading(true);
+    }
 
-    // Load monthly ratings from Sheet (background, non-blocking)
+    // Rating mensili storici dal foglio (background, non bloccante)
     fetch(SCRIPT_URL + "?action=getRatings")
       .then(r => r.ok ? r.json() : null)
       .then(table => {
@@ -261,24 +269,32 @@ export default function App() {
       })
       .catch(() => { /* silent */ });
 
+    // 2+3. REVALIDATE in background: ricarico lo storico completo dall'Apps Script e aggiorno
+    //      quando arriva, SENZA bloccare l'apertura né imporre ritardi artificiali.
     try {
       const res = await fetch(SCRIPT_URL);
       if (!res.ok) throw new Error();
       const matches: RawMatch[] = await res.json();
       if (Array.isArray(matches) && matches.length > 0) {
-        saveToStorage(matches); setState(replayMatches(matches)); await minDelay; setLoading(false); return;
+        saveToStorage(matches);
+        setState(replayMatches(matches));
+        setLoading(false);
+        return;
       }
-    } catch { /* fallback */ }
-    try {
-      const res = await fetch(SHEET_CSV_URL);
-      if (res.ok) {
-        const parsed = parseCSV(await res.text());
-        if (parsed.length > 0) { saveToStorage(parsed); setState(replayMatches(parsed)); await minDelay; setLoading(false); return; }
-      }
-    } catch { /* fallback */ }
-    setState(replayMatches(loadFromStorage()));
-    await minDelay;
-    setLoading(false);
+      throw new Error();
+    } catch { /* fallback solo se non avevo cache da mostrare */ }
+
+    if (!hasCache) {
+      try {
+        const res = await fetch(SHEET_CSV_URL);
+        if (res.ok) {
+          const parsed = parseCSV(await res.text());
+          if (parsed.length > 0) { saveToStorage(parsed); setState(replayMatches(parsed)); setLoading(false); return; }
+        }
+      } catch { /* fallback */ }
+      setState(replayMatches(loadFromStorage()));
+      setLoading(false);
+    }
   }, []);
 
   useEffect(() => { loadData(); }, [loadData]);
